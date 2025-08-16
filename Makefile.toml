@@ -39,6 +39,7 @@ args = ["build", "-p", "wrts_lobby", "--profile", "${BUILD_PROFILE_TEXT}"]
 dependencies = ["build_match"]
 script_runner = "@shell"
 script = '''
+mkdir wrts_lobby/build_assets/
 cp target/${DEBUG_OR_RELEASE_TEXT}/wrts_match.exe wrts_lobby/build_assets/wrts_match.exe
 '''
 
