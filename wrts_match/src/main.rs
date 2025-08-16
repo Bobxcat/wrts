@@ -1,11 +1,10 @@
 use std::io::{Read, Write, stderr, stdin, stdout};
 
-use bevy::{prelude::*, render::RenderPlugin, window::ExitCondition, winit::WinitPlugin};
+use bevy::{
+    log::LogPlugin, prelude::*, render::RenderPlugin, window::ExitCondition, winit::WinitPlugin,
+};
 
 fn read_io(mut commands: Commands, mut exit: EventWriter<AppExit>, time: Res<Time>) {
-    //
-    //
-
     println!("Elapsed seconds: {:?}", time.delta());
 
     println!("CREATED");

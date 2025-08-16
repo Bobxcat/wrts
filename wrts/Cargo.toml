@@ -13,10 +13,11 @@ rand = "0.9.1"
 rand_distr = "0.5.1"
 
 divan = "0.1.21"
-wtransport = { version = "0.6.1" }
+wtransport = { version = "0.6.1", features = ["dangerous-configuration"] }
 anyhow = "1.0.99"
 slotmap = "1.0.7"
 wrts_messaging = { path = "../wrts_messaging" }
+tokio = { version = "1.47.1", features = ["rt", "sync"] }
 
 [[bench]]
 name = "bench"

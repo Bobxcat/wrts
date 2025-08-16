@@ -25,6 +25,7 @@ use crate::{
     ship::Ship,
     ui::{
         in_game::{InGameUIPlugin, InGameUIState},
+        lobby::LobbyUiPlugin,
         main_menu::MainMenuUIPlugin,
     },
 };
@@ -32,7 +33,8 @@ use crate::{
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[states(scoped_entities)]
 pub enum AppState {
-    ConnectingToNetwork,
+    ConnectingToServer,
+    LobbyMenu,
     MainMenu,
     InGame { paused: bool },
     PostGame,
@@ -949,13 +951,14 @@ pub fn run() {
         .add_plugins(MainMenuUIPlugin)
         .add_plugins(InGameUIPlugin)
         .add_plugins(NetworkingPlugin)
+        .add_plugins(LobbyUiPlugin)
         //
         .init_resource::<PlayerSettings>()
         .init_resource::<CursorWorldPos>()
         .init_resource::<GameRules>()
         .init_resource::<MapZoom>()
         //
-        .insert_state(AppState::MainMenu)
+        .insert_state(AppState::ConnectingToServer)
         .add_computed_state::<InGameState>()
         .enable_state_scoped_entities::<InGameState>()
         //

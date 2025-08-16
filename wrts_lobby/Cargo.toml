@@ -6,7 +6,11 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.99"
 slotmap = "1.0.7"
-tokio = { version = "1.47.1", features = ["rt-multi-thread"] }
+tokio = { version = "1.47.1", features = [
+    "rt-multi-thread",
+    "process",
+    "sync",
+] }
 wtransport = { version = "0.6.1", features = ["self-signed"] }
 wrts_messaging = { path = "../wrts_messaging" }
 tracing = "0.1.41"

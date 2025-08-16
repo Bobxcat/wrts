@@ -1,11 +1,16 @@
 use std::{
-    fs::{self, File},
     io::{self, Write},
     marker::PhantomData,
     path::{Path, PathBuf},
+    process::Stdio,
     sync::{LazyLock, Mutex, OnceLock},
 };
 
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    process::{Child, ChildStdin, ChildStdout, Command},
+    task::JoinHandle,
+};
 use tracing::error;
 
 fn ctrlc_handler() {
@@ -112,7 +117,7 @@ pub fn wrts_match_exe() -> &'static Path {
     static PATH: LazyLock<PathBuf> = LazyLock::new(|| {
         let data = include_bytes!("../build_assets/wrts_match.exe");
         let path = temp_dir().join("wrts_match.exe");
-        let mut f = File::create_new(&path).unwrap();
+        let mut f = std::fs::File::create_new(&path).unwrap();
         f.write_all(data).unwrap();
         f.flush().unwrap();
         path
@@ -121,16 +126,53 @@ pub fn wrts_match_exe() -> &'static Path {
     &PATH
 }
 
+pub struct WrtsMatchProcess {
+    pub process: Child,
+    pub stdin: ChildStdin,
+    pub stdout: ChildStdout,
+    log_path: String,
+}
+
+impl WrtsMatchProcess {
+    pub async fn spawn() -> anyhow::Result<Self> {
+        let log_path = format!("wrts_log_{:x}.txt", rand::random_range(0..(1024 * 1024)));
+
+        let mut process = Command::new(wrts_match_exe())
+            // Disable coloring in bevy logs, since they are written to a `.txt` file
+            .env("NO_COLOR", "1")
+            // Enable verbose backtraces
+            .env("BEVY_BACKTRACE", "full")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(log_create(&log_path).unwrap())
+            .spawn()?;
+
+        let stdin = process.stdin.take().unwrap();
+        let stdout = process.stdout.take().unwrap();
+        // stdout.read
+        Ok(Self {
+            process,
+            stdin,
+            stdout,
+            log_path,
+        })
+    }
+
+    pub fn log_path(&self) -> &str {
+        &self.log_path
+    }
+}
+
 pub fn log_dir() -> &'static Path {
     static LOG_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
         let path = "logs";
-        let _ = fs::remove_dir_all(path);
-        fs::create_dir_all(path).unwrap();
+        let _ = std::fs::remove_dir_all(path);
+        std::fs::create_dir_all(path).unwrap();
         path.into()
     });
     &LOG_DIR
 }
 
-pub fn log_create(path: impl AsRef<Path>) -> io::Result<File> {
-    File::create_new(log_dir().join(path))
+pub fn log_create(path: impl AsRef<Path>) -> io::Result<std::fs::File> {
+    std::fs::File::create_new(log_dir().join(path))
 }
