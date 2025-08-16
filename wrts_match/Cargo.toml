@@ -1,0 +1,9 @@
+[package]
+name = "wrts_match"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.99"
+wrts_messaging = { path = "../wrts_messaging" }
+bevy = { version = "0.16.1", features = ["track_location"] }

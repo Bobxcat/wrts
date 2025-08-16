@@ -1,0 +1,17 @@
+[package]
+name = "wrts_lobby"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.99"
+slotmap = "1.0.7"
+tokio = { version = "1.47.1", features = ["rt-multi-thread"] }
+wtransport = { version = "0.6.1", features = ["self-signed"] }
+wrts_messaging = { path = "../wrts_messaging" }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+# tempfile = "3.20.0"
+rust-embed = { version = "8.7.2", features = ["compression"] }
+rand = "0.9.2"
+ctrlc = "3.4.7"
