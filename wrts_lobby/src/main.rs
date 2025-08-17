@@ -119,29 +119,33 @@ async fn handle_connection_inner(
 
         tokio::spawn(
             async move {
-                let Some(msg) = handler2client_rx.recv().await else {
-                    return;
-                };
-                if let Err(err) = msg.send(&mut tx).await {
-                    error!("Failed to send to client: {err}");
-                    return;
-                };
+                loop {
+                    let Some(msg) = handler2client_rx.recv().await else {
+                        return;
+                    };
+                    if let Err(err) = msg.send(&mut tx).await {
+                        error!("Failed to send to client: {err}");
+                        return;
+                    };
+                }
             }
             .instrument(info_span!("handler2client")),
         );
 
         tokio::spawn(
             async move {
-                let msg = match Message::recv(&mut rx).await {
-                    Ok(msg) => msg,
-                    Err(err) => {
-                        error!("Client sent bad message: {err}");
+                loop {
+                    let msg = match Message::recv(&mut rx).await {
+                        Ok(msg) => msg,
+                        Err(err) => {
+                            error!("Client sent bad message: {err}");
+                            return;
+                        }
+                    };
+                    let Ok(()) = client2handler_tx.send(msg).await else {
                         return;
-                    }
-                };
-                let Ok(()) = client2handler_tx.send(msg).await else {
-                    return;
-                };
+                    };
+                }
             }
             .instrument(info_span!("client2handler")),
         );
