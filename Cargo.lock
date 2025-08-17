@@ -6173,8 +6173,10 @@ name = "wrts_messaging"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "pin-project",
  "serde",
  "serde_json",
+ "tokio",
  "wtransport",
 ]
 

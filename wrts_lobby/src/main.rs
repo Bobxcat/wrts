@@ -153,12 +153,7 @@ async fn handle_connection_inner(
         (handler2client_tx, client2handler_rx)
     };
 
-    loop {
-        if client_tx.is_closed() || client_rx.is_closed() {
-            return Err(anyhow!("Client disconnected"));
-        }
-
-        let event = clients_events.recv().await?;
+    let process_clients_event = async |event: ClientsEvent| -> Result<()> {
         match event {
             ClientsEvent::ClientJoined { id } => {
                 client_tx
@@ -174,6 +169,28 @@ async fn handle_connection_inner(
                         client_id: id,
                     }))
                     .await?
+            }
+        }
+
+        Ok(())
+    };
+
+    loop {
+        let client_disconnected_future = async {
+            loop {
+                match client_tx.is_closed() || client_rx.is_closed() {
+                    true => return,
+                    false => tokio::task::yield_now().await,
+                }
+            }
+        };
+
+        tokio::select! {
+            event = clients_events.recv() => {
+                process_clients_event(event?).await?
+            }
+            _ = client_disconnected_future => {
+                return Err(anyhow!("Client disconnected"));
             }
         }
     }

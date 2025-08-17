@@ -1,10 +1,14 @@
 use std::{
     fmt::Display,
     io::{self, Read, Write},
+    pin::Pin,
+    task::Poll,
 };
 
 use anyhow::{Result, anyhow};
+use pin_project::pin_project;
 use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use wtransport::{RecvStream, SendStream};
 
 pub const DEFAULT_PORT: u16 = 4433;
@@ -57,8 +61,92 @@ pub enum Message {
     Lobby2Client(Lobby2Client),
 }
 
+#[pin_project]
+pub struct TokioWtransportCompat<'a, T> {
+    #[pin]
+    x: &'a mut T,
+}
+
+impl<'a, T> From<&'a mut T> for TokioWtransportCompat<'a, T> {
+    fn from(value: &'a mut T) -> Self {
+        Self { x: value }
+    }
+}
+
+impl tokio::io::AsyncRead for TokioWtransportCompat<'_, RecvStream> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        self.project().x.poll_read(cx, buf)
+    }
+}
+
+impl tokio::io::AsyncWrite for TokioWtransportCompat<'_, SendStream> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::result::Result<usize, io::Error>> {
+        self.project().x.poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::result::Result<(), io::Error>> {
+        self.project().x.poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::result::Result<(), io::Error>> {
+        self.project().x.poll_shutdown(cx)
+    }
+}
+
+impl tokio::io::AsyncRead for TokioWtransportCompat<'_, tokio::process::ChildStdout> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        self.project().x.poll_read(cx, buf)
+    }
+}
+
+impl tokio::io::AsyncWrite for TokioWtransportCompat<'_, tokio::process::ChildStdin> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::result::Result<usize, io::Error>> {
+        self.project().x.poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::result::Result<(), io::Error>> {
+        self.project().x.poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::result::Result<(), io::Error>> {
+        self.project().x.poll_shutdown(cx)
+    }
+}
+
 impl Message {
-    pub async fn send(&self, stream: &mut SendStream) -> Result<()> {
+    pub async fn send<'a, T: 'a>(&self, stream: &'a mut T) -> Result<()>
+    where
+        TokioWtransportCompat<'a, T>: tokio::io::AsyncWrite,
+    {
+        let mut stream = TokioWtransportCompat::<'a, T>::from(stream);
         let bytes = serde_json::to_vec(self)?;
         let length_prefix: [u8; 4] = (bytes.len() as u32).to_be_bytes();
         stream.write_all(&length_prefix).await?;
@@ -66,7 +154,11 @@ impl Message {
         Ok(())
     }
 
-    pub async fn recv(stream: &mut RecvStream) -> Result<Self> {
+    pub async fn recv<'a, T: 'a>(stream: &'a mut T) -> Result<Self>
+    where
+        TokioWtransportCompat<'a, T>: tokio::io::AsyncRead,
+    {
+        let mut stream = TokioWtransportCompat::<'a, T>::from(stream);
         let length_prefix = {
             let mut buf: [u8; 4] = [0u8; std::mem::size_of::<u32>()];
             stream.read_exact(&mut buf).await?;

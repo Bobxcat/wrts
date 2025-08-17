@@ -2,11 +2,11 @@ use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
 use itertools::Itertools;
-use wrts_messaging::ClientId;
+use wrts_messaging::{Client2Lobby, ClientId, Lobby2Client, Message};
 
 use crate::{
     AppState,
-    networking::{ClientInfo, ServerConnection},
+    networking::{ClientInfo, RecvNextErr, ServerConnection},
 };
 
 pub struct LobbyUiPlugin;
@@ -21,13 +21,18 @@ impl Plugin for LobbyUiPlugin {
             )
             .add_systems(
                 Update,
-                (update_lobby_clients_list).run_if(in_state(AppState::LobbyMenu)),
+                (update_lobby_clients_list,).run_if(in_state(AppState::LobbyMenu)),
             );
     }
 }
 
 #[derive(Component, Debug, Clone, Copy)]
 struct LobbyClientsList;
+
+#[derive(Component, Debug, Clone, Copy)]
+struct LobbyClientsListEntry {
+    tracking_client: ClientId,
+}
 
 pub fn setup_lobby_ui(mut commands: Commands) {
     commands.spawn((
@@ -56,18 +61,54 @@ fn lobby_networking(
     clients: Query<(Entity, &ClientInfo)>,
     mut server: ResMut<ServerConnection>,
 ) -> Option<()> {
-    let msgs = server.recv_all()?;
+    let mut clients_by_id: HashMap<ClientId, Entity> =
+        clients.into_iter().map(|(e, c)| (c.id, e)).collect();
 
-    if msgs.len() > 0 {
-        info!("Messages received: {:?}", msgs);
+    loop {
+        let msg = match server.recv_next() {
+            Ok(x) => x,
+            Err(RecvNextErr::Empty) => return Some(()),
+            Err(RecvNextErr::Disconnected) => return None,
+        };
+
+        let Message::Lobby2Client(msg) = msg else {
+            error!("Received non-lobby2client message: {msg:?}");
+            return None;
+        };
+
+        match msg {
+            Lobby2Client::ClientJoined {
+                client_id,
+                username,
+            } => {
+                let e = commands
+                    .spawn(ClientInfo {
+                        id: client_id,
+                        user: username,
+                    })
+                    .id();
+                clients_by_id.insert(client_id, e);
+            }
+            Lobby2Client::ClientLeft { client_id } => {
+                if let Some(e) = clients_by_id.remove(&client_id) {
+                    commands.entity(e).despawn();
+                } else {
+                    error!(
+                        "Received `ClientLeft` message without matching client to remove! {client_id}"
+                    );
+                    continue;
+                };
+            }
+            Lobby2Client::InitialInformation { .. } => {
+                error!("Unexpected message: {msg:?}");
+                return None;
+            }
+        }
     }
-
-    Some(())
 }
 
 fn lobby_networking_none_handler(
     input: In<Option<()>>,
-    mut commands: Commands,
     mut next_state: ResMut<NextState<AppState>>,
 ) {
     if let None = *input {
@@ -78,30 +119,67 @@ fn lobby_networking_none_handler(
 
 fn update_lobby_clients_list(
     mut commands: Commands,
-    lists: Query<(Entity, &Children), With<LobbyClientsList>>,
-    clients: Query<(Entity, &ClientInfo)>,
+    lists: Query<(Entity, Option<&Children>), With<LobbyClientsList>>,
+    list_entries: Query<(Entity, &LobbyClientsListEntry)>,
+    clients_changed: Query<(Entity, &ClientInfo), Changed<ClientInfo>>,
+    clients_all: Query<(Entity, &ClientInfo)>,
 ) {
-    let clients_by_id: HashMap<ClientId, Entity> =
-        clients.into_iter().map(|(e, c)| (c.id, e)).collect();
+    let clients_changed_by_id: HashMap<ClientId, Entity> = clients_changed
+        .into_iter()
+        .map(|(e, c)| (c.id, e))
+        .collect();
 
-    for (list, list_entries) in lists {
-        let mut clients_to_be_added = clients_by_id.clone();
-        for &entry in list_entries {
-            // let entry_clientinfo = ;
-            commands.entity(entry).despawn();
+    let clients_all_by_id: HashMap<ClientId, Entity> =
+        clients_all.into_iter().map(|(e, c)| (c.id, e)).collect();
+
+    let spawn_entry_display = |mut commands: Commands, list: Entity, client_info: &ClientInfo| {
+        let disp = commands
+            .spawn((
+                LobbyClientsListEntry {
+                    tracking_client: client_info.id,
+                },
+                Node {
+                    margin: UiRect::all(Val::Px(10.)),
+                    ..default()
+                },
+                Text::new(&format!("Client: {client_info:?}")),
+            ))
+            .id();
+        commands.entity(list).add_child(disp);
+    };
+
+    for (list, this_list_entries) in lists {
+        let mut clients_displayed: HashSet<ClientId> = HashSet::new();
+        for &entry in this_list_entries
+            .map(|c| c.into_iter().collect_vec())
+            .unwrap_or_default()
+        {
+            let (_, entry_data) = list_entries.get(entry).unwrap();
+            let entry_client = entry_data.tracking_client;
+
+            if let Some(&client) = clients_changed_by_id.get(&entry_client) {
+                // If this entry tracks a client that needs an updated display
+                let (_, client_info) = clients_changed.get(client).unwrap();
+
+                spawn_entry_display(commands.reborrow(), list, client_info);
+                clients_displayed.insert(entry_client);
+
+                commands.entity(entry).despawn();
+            } else if !clients_all_by_id.contains_key(&entry_client) {
+                // If this entry tracks a client that no longer exists
+                commands.entity(entry).despawn();
+            } else {
+                // If this entry tracks a client that exists and has an up-to-date display
+                clients_displayed.insert(entry_client);
+            }
         }
-        for (client_id, client) in clients_to_be_added.into_iter().sorted() {
-            let (_, client_info) = clients.get(client).unwrap();
-            let display = commands
-                .spawn((
-                    Node {
-                        margin: UiRect::all(Val::Px(50.)),
-                        ..default()
-                    },
-                    Text::new(format!("{:#?}", client_info)),
-                ))
-                .id();
-            commands.entity(list).add_child(display);
+
+        for (_, client_info) in clients_all
+            .into_iter()
+            .filter(|(_, cl_info)| !clients_displayed.contains(&cl_info.id))
+        {
+            // If this client has no corresponding entry in this list
+            spawn_entry_display(commands.reborrow(), list, client_info);
         }
     }
 }
