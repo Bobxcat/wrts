@@ -62,18 +62,18 @@ pub enum Message {
 }
 
 #[pin_project]
-pub struct TokioWtransportCompat<'a, T> {
+pub struct TokioWebTransportCompat<'a, T> {
     #[pin]
     x: &'a mut T,
 }
 
-impl<'a, T> From<&'a mut T> for TokioWtransportCompat<'a, T> {
+impl<'a, T> From<&'a mut T> for TokioWebTransportCompat<'a, T> {
     fn from(value: &'a mut T) -> Self {
         Self { x: value }
     }
 }
 
-impl tokio::io::AsyncRead for TokioWtransportCompat<'_, RecvStream> {
+impl tokio::io::AsyncRead for TokioWebTransportCompat<'_, RecvStream> {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -83,7 +83,7 @@ impl tokio::io::AsyncRead for TokioWtransportCompat<'_, RecvStream> {
     }
 }
 
-impl tokio::io::AsyncWrite for TokioWtransportCompat<'_, SendStream> {
+impl tokio::io::AsyncWrite for TokioWebTransportCompat<'_, SendStream> {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -107,7 +107,7 @@ impl tokio::io::AsyncWrite for TokioWtransportCompat<'_, SendStream> {
     }
 }
 
-impl tokio::io::AsyncRead for TokioWtransportCompat<'_, tokio::process::ChildStdout> {
+impl tokio::io::AsyncRead for TokioWebTransportCompat<'_, tokio::process::ChildStdout> {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -117,7 +117,7 @@ impl tokio::io::AsyncRead for TokioWtransportCompat<'_, tokio::process::ChildStd
     }
 }
 
-impl tokio::io::AsyncWrite for TokioWtransportCompat<'_, tokio::process::ChildStdin> {
+impl tokio::io::AsyncWrite for TokioWebTransportCompat<'_, tokio::process::ChildStdin> {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -144,9 +144,9 @@ impl tokio::io::AsyncWrite for TokioWtransportCompat<'_, tokio::process::ChildSt
 impl Message {
     pub async fn send<'a, T: 'a>(&self, stream: &'a mut T) -> Result<()>
     where
-        TokioWtransportCompat<'a, T>: tokio::io::AsyncWrite,
+        TokioWebTransportCompat<'a, T>: tokio::io::AsyncWrite,
     {
-        let mut stream = TokioWtransportCompat::<'a, T>::from(stream);
+        let mut stream = TokioWebTransportCompat::<'a, T>::from(stream);
         let bytes = serde_json::to_vec(self)?;
         let length_prefix: [u8; 4] = (bytes.len() as u32).to_be_bytes();
         stream.write_all(&length_prefix).await?;
@@ -156,11 +156,11 @@ impl Message {
 
     pub async fn recv<'a, T: 'a>(stream: &'a mut T) -> Result<Self>
     where
-        TokioWtransportCompat<'a, T>: tokio::io::AsyncRead,
+        TokioWebTransportCompat<'a, T>: tokio::io::AsyncRead,
     {
-        let mut stream = TokioWtransportCompat::<'a, T>::from(stream);
+        let mut stream = TokioWebTransportCompat::<'a, T>::from(stream);
         let length_prefix = {
-            let mut buf: [u8; 4] = [0u8; std::mem::size_of::<u32>()];
+            let mut buf: [u8; 4] = [0; 4];
             stream.read_exact(&mut buf).await?;
             u32::from_be_bytes(buf)
         };
