@@ -20,6 +20,7 @@ pub enum ClientsEvent {
     ClientLeft { id: ClientId },
 }
 
+#[derive(Debug, Clone)]
 pub struct ClientInfo {
     pub id: ClientId,
     pub user: String,

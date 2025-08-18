@@ -46,6 +46,7 @@ pub struct TempDirBuilder {
 }
 
 impl TempDirBuilder {
+    #[deny(dead_code)]
     pub fn build() -> Self {
         if TEMP_DIR.get().is_some() {
             panic!("TmpDirHandle::create() called a second time!")

@@ -3,24 +3,32 @@ use std::{
     io::{Read, Write},
     path::PathBuf,
     process::{self, Stdio},
+    sync::Arc,
     time::Duration,
 };
 
 use anyhow::{Result, anyhow};
-use tokio::sync::{mpsc, oneshot};
-use tracing::{Instrument, error, info, info_span, level_filters::LevelFilter};
+use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
+use tracing::{Instrument, error, info, info_span, level_filters::LevelFilter, warn};
 use tracing_subscriber::EnvFilter;
 use wrts_messaging::{Client2Lobby, ClientId, Lobby2Client, Message};
 use wtransport::{Endpoint, Identity, ServerConfig, endpoint::IncomingSession};
 
 use crate::{
     clients::{ClientInfo, Clients, ClientsEvent},
+    match_handler::{
+        ClientHandler2Matchmaker, ClientHandlerMatchmakerSubscription, Matchmaker,
+        Matchmaker2ClientHandler,
+    },
     temp_dir::TempDirBuilder,
 };
 
 mod clients;
+mod match_handler;
 mod temp_dir;
 
+#[deny(dead_code)]
 fn init_logging() {
     let env_filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::INFO.into())
@@ -36,11 +44,13 @@ fn init_logging() {
 struct NewConnectionInfo {
     incoming_session: IncomingSession,
     client_id: ClientId,
+    mm_subscription: ClientHandlerMatchmakerSubscription,
 }
 
 async fn handle_connection(info: NewConnectionInfo) {
     let client_id = info.client_id;
-    let exit = handle_connection_inner(info).await;
+    let abort_token = CancellationToken::new();
+    let exit = handle_connection_inner(info, abort_token.clone()).await;
     match exit {
         Ok(()) => info!("{client_id} Exited successfully"),
         Err(err) => error!("{client_id} Exited with error: `{err}`"),
@@ -50,13 +60,16 @@ async fn handle_connection(info: NewConnectionInfo) {
         clients.id2info.remove(&client_id);
         clients.send(ClientsEvent::ClientLeft { id: client_id });
     }
+    abort_token.cancel();
 }
 
 async fn handle_connection_inner(
     NewConnectionInfo {
         incoming_session,
         client_id,
+        mut mm_subscription,
     }: NewConnectionInfo,
+    abort_token: CancellationToken,
 ) -> Result<()> {
     info!("Waiting for session request...");
 
@@ -113,39 +126,61 @@ async fn handle_connection_inner(
         clients.subscribe()
     };
 
-    let (client_tx, client_rx) = {
+    let (mut client_tx, mut client_rx) = {
         let (handler2client_tx, mut handler2client_rx) = mpsc::channel::<Message>(64);
         let (client2handler_tx, client2handler_rx) = mpsc::channel::<Message>(64);
 
+        let abort_token_cloned = abort_token.clone();
+
         tokio::spawn(
             async move {
+                let abort_token = abort_token_cloned;
                 loop {
                     let Some(msg) = handler2client_rx.recv().await else {
-                        return;
+                        break;
                     };
-                    if let Err(err) = msg.send(&mut tx).await {
-                        error!("Failed to send to client: {err}");
-                        return;
-                    };
+
+                    tokio::select! {
+                        res = msg.send(&mut tx) => {
+                            if let Err(err) = res {
+                                error!("Failed to send to client: {err}");
+                                break;
+                            };
+                        }
+                        _ = abort_token.cancelled() => {
+                            break;
+                        }
+                    }
                 }
+                abort_token.cancel();
             }
             .instrument(info_span!("handler2client")),
         );
 
+        let abort_token_cloned = abort_token.clone();
         tokio::spawn(
             async move {
+                let abort_token = abort_token_cloned;
                 loop {
-                    let msg = match Message::recv(&mut rx).await {
-                        Ok(msg) => msg,
-                        Err(err) => {
-                            error!("Client sent bad message: {err}");
-                            return;
+                    tokio::select! {
+                        msg = Message::recv(&mut rx) => {
+                            let msg = match msg {
+                                Ok(msg) => msg,
+                                Err(err) => {
+                                    error!("Client sent bad message: {err}");
+                                    break;
+                                }
+                            };
+                            let Ok(()) = client2handler_tx.send(msg).await else {
+                                break;
+                            };
                         }
-                    };
-                    let Ok(()) = client2handler_tx.send(msg).await else {
-                        return;
-                    };
+                        _ = abort_token.cancelled() => {
+                            break;
+                        }
+                    }
                 }
+                abort_token.cancel();
             }
             .instrument(info_span!("client2handler")),
         );
@@ -153,15 +188,26 @@ async fn handle_connection_inner(
         (handler2client_tx, client2handler_rx)
     };
 
+    enum ClientState {
+        InLobby,
+        InMatch {
+            match_instance_tx: mpsc::Sender<Message>,
+            match_instance_rx: mpsc::Receiver<Message>,
+        },
+    }
+
+    let mut state = ClientState::InLobby;
+
     let process_clients_event = async |event: ClientsEvent| -> Result<()> {
         match event {
             ClientsEvent::ClientJoined { id } => {
+                let clients = Clients::lock().await;
                 client_tx
                     .send(Message::Lobby2Client(Lobby2Client::ClientJoined {
                         client_id: id,
-                        username: Clients::lock().await.id2info[&id].user.clone(),
+                        username: clients.id2info[&id].user.clone(),
                     }))
-                    .await?
+                    .await?;
             }
             ClientsEvent::ClientLeft { id } => {
                 client_tx
@@ -175,22 +221,74 @@ async fn handle_connection_inner(
         Ok(())
     };
 
+    let handle_client_message_in_lobby = async |msg: Message| -> Result<()> {
+        match msg {
+            Message::Client2Lobby(Client2Lobby::SetReadyForMatch { is_ready }) => mm_subscription
+                .tx
+                .send(ClientHandler2Matchmaker::SetReadyForMatch { is_ready })
+                .await
+                .map_err(|_| anyhow!("Matchmaker disconnnected"))?,
+            Message::Client2Lobby(Client2Lobby::InitialInformationResponse { .. })
+            | Message::Lobby2Client(_)
+            | Message::Client2Match(_)
+            | Message::Match2Client(_) => warn!(
+                "Unexpected message during `handle_client_message`: {:?}",
+                msg
+            ),
+        }
+        Ok(())
+    };
+
     loop {
-        let client_disconnected_future = async {
-            loop {
-                match client_tx.is_closed() || client_rx.is_closed() {
-                    true => return,
-                    false => tokio::task::yield_now().await,
+        match &mut state {
+            ClientState::InLobby => {
+                tokio::select! {
+                    cl_msg = client_rx.recv() => {
+                        let cl_msg = cl_msg.ok_or(anyhow!("Client disconnected"))?;
+                        handle_client_message_in_lobby(cl_msg).await?
+                    }
+                    event = clients_events.recv() => {
+                        process_clients_event(event?).await?
+                    }
+                    mm_msg = mm_subscription.rx.recv() => {
+                        let mm_msg = mm_msg.ok_or(anyhow!("Matchmaker disconnected"))?;
+                        match mm_msg {
+                            Matchmaker2ClientHandler::MatchJoined { match_id: _, match_instance_tx, match_instance_rx } => {
+                                state = ClientState::InMatch { match_instance_tx, match_instance_rx };
+                                let _ = client_tx.send(Message::Lobby2Client(Lobby2Client::MatchJoined {  })).await;
+                            },
+                        }
+                    }
+                    _ = abort_token.cancelled() => {
+                        return Err(anyhow!("Client disconnected"));
+                    }
                 }
             }
-        };
-
-        tokio::select! {
-            event = clients_events.recv() => {
-                process_clients_event(event?).await?
-            }
-            _ = client_disconnected_future => {
-                return Err(anyhow!("Client disconnected"));
+            ClientState::InMatch {
+                match_instance_tx,
+                match_instance_rx,
+            } => {
+                tokio::select! {
+                    cl_msg = client_rx.recv() => {
+                        let cl_msg = cl_msg.ok_or(anyhow!("Client disconnected"))?;
+                        match_instance_tx.send(cl_msg).await.map_err(|_| anyhow!("Match instance disconnected"))?;
+                    }
+                    match_msg = match_instance_rx.recv() => {
+                        let match_msg = match_msg.ok_or(anyhow!("Match instance disconnected"))?;
+                        client_tx.send(match_msg).await.map_err(|_| anyhow!("Client disconnected"))?;
+                    }
+                    mm_msg = mm_subscription.rx.recv() => {
+                        let mm_msg = mm_msg.ok_or(anyhow!("Matchmaker disconnected"))?;
+                        match mm_msg {
+                            Matchmaker2ClientHandler::MatchJoined { match_id: _, match_instance_tx, match_instance_rx } => {
+                                return Err(anyhow!("Matchmaker sent `MatchJoined` message when client already in match"))
+                            },
+                        }
+                    }
+                    _ = abort_token.cancelled() => {
+                        return Err(anyhow!("Client disconnected"));
+                    }
+                }
             }
         }
     }
@@ -211,7 +309,7 @@ async fn main() -> Result<()> {
     let _tmp_dir = TempDirBuilder::build();
     init_logging();
 
-    tokio::spawn(trace_client_events().instrument(info_span!("trace_client_events")));
+    tokio::spawn(trace_client_events().instrument(info_span!("Trace Clients Events")));
 
     let config = ServerConfig::builder()
         .with_bind_default(wrts_messaging::DEFAULT_PORT)
@@ -223,17 +321,21 @@ async fn main() -> Result<()> {
 
     info!("Endpoint created");
 
+    let mm = Matchmaker::spawn();
+
     for id in 0.. {
         let client_id = ClientId(id);
         info!("Open sessions: {}", ep.open_connections());
         info!("Awaiting session {client_id}");
         let session = ep.accept().await;
+        let mm_subscription = mm.lock().await.subscribe(client_id);
         tokio::spawn(
             handle_connection(NewConnectionInfo {
                 incoming_session: session,
                 client_id,
+                mm_subscription,
             })
-            .instrument(info_span!("Client Connection", id)),
+            .instrument(info_span!("Client Connection", %client_id)),
         );
     }
 

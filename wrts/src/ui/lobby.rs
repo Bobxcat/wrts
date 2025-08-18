@@ -60,9 +60,17 @@ fn lobby_networking(
     mut commands: Commands,
     clients: Query<(Entity, &ClientInfo)>,
     mut server: ResMut<ServerConnection>,
+    mut has_readied: Local<bool>,
 ) -> Option<()> {
     let mut clients_by_id: HashMap<ClientId, Entity> =
         clients.into_iter().map(|(e, c)| (c.id, e)).collect();
+
+    if !*has_readied {
+        server.send(Message::Client2Lobby(Client2Lobby::SetReadyForMatch {
+            is_ready: true,
+        }))?;
+        *has_readied = true;
+    }
 
     loop {
         let msg = match server.recv_next() {
@@ -102,6 +110,10 @@ fn lobby_networking(
             Lobby2Client::InitialInformation { .. } => {
                 error!("Unexpected message: {msg:?}");
                 return None;
+            }
+            Lobby2Client::MatchJoined {} => {
+                error!("Message not yet handled: {msg:?}");
+                todo!()
             }
         }
     }

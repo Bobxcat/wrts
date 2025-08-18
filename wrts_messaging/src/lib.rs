@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use pin_project::pin_project;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use wtransport::{RecvStream, SendStream};
 
@@ -35,7 +35,12 @@ pub enum Match2Client {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Client2Lobby {
     /// Handshake part B
-    InitialInformationResponse { username: String },
+    InitialInformationResponse {
+        username: String,
+    },
+    SetReadyForMatch {
+        is_ready: bool,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,6 +56,7 @@ pub enum Lobby2Client {
     ClientLeft {
         client_id: ClientId,
     },
+    MatchJoined {},
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -146,32 +152,71 @@ impl Message {
     where
         TokioWebTransportCompat<'a, T>: tokio::io::AsyncWrite,
     {
-        let mut stream = TokioWebTransportCompat::<'a, T>::from(stream);
-        let bytes = serde_json::to_vec(self)?;
-        let length_prefix: [u8; 4] = (bytes.len() as u32).to_be_bytes();
-        stream.write_all(&length_prefix).await?;
-        stream.write_all(&bytes).await?;
-        Ok(())
+        serialize_to_stream(self, stream).await
     }
 
     pub async fn recv<'a, T: 'a>(stream: &'a mut T) -> Result<Self>
     where
         TokioWebTransportCompat<'a, T>: tokio::io::AsyncRead,
     {
-        let mut stream = TokioWebTransportCompat::<'a, T>::from(stream);
-        let length_prefix = {
-            let mut buf: [u8; 4] = [0; 4];
-            stream.read_exact(&mut buf).await?;
-            u32::from_be_bytes(buf)
-        };
-        let limit = 1024 * 1024;
-        if length_prefix > limit {
-            return Err(anyhow!(
-                "A message was recieved of length: {length_prefix}b! The limit is {limit}b"
-            ));
-        }
-        let mut data = vec![0u8; length_prefix as usize];
-        stream.read_exact(&mut data).await?;
-        Ok(serde_json::from_slice(&data)?)
+        deserialize_from_stream(stream).await
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WrtsMatchMessage {
+    /// Refers to either
+    /// * The target client of the message
+    /// * The client that sent the message
+    pub client: ClientId,
+    pub msg: Message,
+}
+
+impl WrtsMatchMessage {
+    pub async fn send<'a, T: 'a>(&self, stream: &'a mut T) -> Result<()>
+    where
+        TokioWebTransportCompat<'a, T>: tokio::io::AsyncWrite,
+    {
+        serialize_to_stream(self, stream).await
+    }
+
+    pub async fn recv<'a, T: 'a>(stream: &'a mut T) -> Result<Self>
+    where
+        TokioWebTransportCompat<'a, T>: tokio::io::AsyncRead,
+    {
+        deserialize_from_stream(stream).await
+    }
+}
+
+pub async fn serialize_to_stream<'a, T: 'a>(msg: &impl Serialize, stream: &'a mut T) -> Result<()>
+where
+    TokioWebTransportCompat<'a, T>: tokio::io::AsyncWrite,
+{
+    let mut stream = TokioWebTransportCompat::<'a, T>::from(stream);
+    let bytes = serde_json::to_vec(msg)?;
+    let length_prefix: [u8; 4] = (bytes.len() as u32).to_be_bytes();
+    stream.write_all(&length_prefix).await?;
+    stream.write_all(&bytes).await?;
+    Ok(())
+}
+
+pub async fn deserialize_from_stream<'a, T: 'a, M: DeserializeOwned>(stream: &'a mut T) -> Result<M>
+where
+    TokioWebTransportCompat<'a, T>: tokio::io::AsyncRead,
+{
+    let mut stream = TokioWebTransportCompat::<'a, T>::from(stream);
+    let length_prefix = {
+        let mut buf: [u8; 4] = [0; 4];
+        stream.read_exact(&mut buf).await?;
+        u32::from_be_bytes(buf)
+    };
+    let limit = 1024 * 1024;
+    if length_prefix > limit {
+        return Err(anyhow!(
+            "A message was recieved of length: {length_prefix}b! The limit is {limit}b"
+        ));
+    }
+    let mut data = vec![0u8; length_prefix as usize];
+    stream.read_exact(&mut data).await?;
+    Ok(serde_json::from_slice(&data)?)
 }
