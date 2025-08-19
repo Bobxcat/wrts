@@ -3,7 +3,7 @@
 //! Code generated from the wolfram alpha output of:
 //! https://www.wolframalpha.com/input?i2d=true&i=Solve%5C%2891%29%5C%28123%29Sqrt%5BPower%5B%5C%2840%29Subscript%5Bp%2Cx%5D%2BSubscript%5Bv%2Cx%5Dt%5C%2841%29%2C2%5D%2BPower%5B%5C%2840%29Subscript%5Bp%2Cy%5D%2BSubscript%5Bv%2Cy%5Dt%5C%2841%29%2C2%5D%5D%3DSubscript%5Bs%2Cp%5DtSqrt%5B1-Power%5B%5C%2840%29Subscript%5Bg%2C0%5DDivide%5Bt%2C2Subscript%5Bs%2Cp%5D%5D%5C%2841%29%2C2%5D%5D%5C%28125%29%5C%2844%29%5C%28123%29t%5C%28125%29%5C%2893%29
 
-use num::complex::*;
+use num_complex::*;
 /// "handwritten"
 ///
 /// In case this is too slow, fast floating point ops would provide fairly significant speed up

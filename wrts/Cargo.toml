@@ -4,10 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+wrts_messaging = { path = "../wrts_messaging" }
+wrts_match_shared = { path = "../wrts_match_shared" }
+
 bevy = { version = "0.16.1", features = ["track_location"] }
 enum-map = "2.7.3"
 itertools = "0.14.0"
-num = "0.4.3"
+# num = "0.4.3"
 ordered-float = "5.0.0"
 rand = "0.9.1"
 rand_distr = "0.5.1"
@@ -16,8 +19,8 @@ divan = "0.1.21"
 wtransport = { version = "0.6.1", features = ["dangerous-configuration"] }
 anyhow = "1.0.99"
 slotmap = "1.0.7"
-wrts_messaging = { path = "../wrts_messaging" }
 tokio = { version = "1.47.1", features = ["rt", "sync"] }
+num-complex = "0.4.6"
 
 [[bench]]
 name = "bench"

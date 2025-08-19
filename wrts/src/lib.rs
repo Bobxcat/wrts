@@ -1,4 +1,3 @@
-mod generated_bullet_problem_solution;
 mod in_match;
 mod math_utils;
 mod networking;
@@ -38,40 +37,9 @@ pub enum AppState {
     ConnectingToServer,
     LobbyMenu,
     InMatch,
-
-    // OLD
-    MainMenu,
-    InGame { paused: bool },
-    PostGame,
-}
-
-/// Represents any `AppState::InGame`
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub struct InGameState;
-
-impl ComputedStates for InGameState {
-    type SourceStates = Option<AppState>;
-
-    fn compute(sources: Option<AppState>) -> Option<Self> {
-        match sources {
-            Some(AppState::InGame { .. }) => Some(InGameState),
-            _ => None,
-        }
-    }
 }
 
 const SHIP_SELECTION_SIZE: f32 = 20.;
-
-#[derive(Resource)]
-struct GameRules {
-    gravity: f32,
-}
-
-impl Default for GameRules {
-    fn default() -> Self {
-        Self { gravity: 10. }
-    }
-}
 
 struct TeamColors {
     pub ship_color: Color,
@@ -247,52 +215,6 @@ fn apply_velocity(q: Query<(&mut Transform, &Velocity)>, time: Res<Time>) {
     }
 }
 
-#[derive(Debug, Component, Clone)]
-#[require(Team, Sprite, Transform, Velocity)]
-struct Bullet {
-    owning_ship: Entity,
-    damage: f64,
-}
-
-fn move_bullets(
-    mut commands: Commands,
-    q: Query<(Entity, &Bullet, &Transform, &mut Velocity)>,
-    rules: Res<GameRules>,
-    time: Res<Time>,
-) {
-    for (entity, _bullet, trans, mut bullet_vel) in q {
-        bullet_vel.0.z -= rules.gravity * time.delta_secs();
-        if trans.translation.z <= -100. {
-            commands.entity(entity).despawn();
-        }
-    }
-}
-
-fn collide_bullets(
-    mut commands: Commands,
-    bullets: Query<(Entity, &Bullet, &Transform, &Team)>,
-    mut ships: Query<(Entity, &Ship, &Transform, &Team, &mut Health)>,
-) {
-    for (bullet_entity, bullet, bullet_trans, bullet_team) in bullets {
-        for (ship_entity, _ship, ship_trans, ship_team, mut ship_health) in &mut ships {
-            if bullet_team == ship_team {
-                continue;
-            }
-            if ship_trans.translation.distance(bullet_trans.translation) <= 10. {
-                if ship_health.0 <= 0. {
-                    continue;
-                }
-                ship_health.0 -= bullet.damage;
-                commands.entity(bullet_entity).despawn();
-                if ship_health.0 <= 0. {
-                    commands.entity(ship_entity).despawn();
-                    break;
-                }
-            }
-        }
-    }
-}
-
 fn update_detected_ships(
     mut commands: Commands,
     ships: Query<(
@@ -350,7 +272,7 @@ fn update_ship_ghosts(
                     ship.0,
                     commands
                         .spawn((
-                            StateScoped(InGameState),
+                            StateScoped(AppState::InMatch),
                             ShipGhost { owner: ship.0 },
                             no_longer_detected.last_known,
                         ))
@@ -389,167 +311,11 @@ fn update_ship_ghosts_display(
     }
 }
 
-fn update_ai_ship_targets(
-    mut commands: Commands,
-
-    ships: Query<(
-        Entity,
-        &Team,
-        &mut Ship,
-        &Transform,
-        &Velocity,
-        Option<&FireTarget>,
-    )>,
-) {
-    let (friend_ships, enemy_ships) = ships
-        .into_iter()
-        .partition::<Vec<_>, _>(|&(_, &team, _, _, _, _)| team == Team::Friend);
-
-    for ai_ship in enemy_ships {
-        let targ = friend_ships.iter().min_by_key(|player_ship| {
-            OrderedFloat(
-                ai_ship
-                    .3
-                    .translation
-                    .distance_squared(player_ship.3.translation),
-            )
-        });
-        let Some(targ) = targ else {
-            continue;
-        };
-        commands
-            .entity(ai_ship.0)
-            .insert(FireTarget { ship: targ.0 });
-    }
-}
-
-fn update_ai_moves(mut commands: Commands, ships: Query<(Entity, &Transform, &Team), With<Ship>>) {
-    for ship in ships {
-        if ship.2.is_enemy() {
-            commands.entity(ship.0).insert(MoveOrder {
-                waypoints: vec![vec2(0., 0.)],
-            });
-        }
-    }
-}
-
-fn fire_bullets(
-    mut commands: Commands,
-    ships: Query<(
-        Entity,
-        &Team,
-        &mut Ship,
-        &Transform,
-        &Velocity,
-        Option<&FireTarget>,
-    )>,
-    time: Res<Time>,
-    rules: Res<GameRules>,
-    settings: Res<PlayerSettings>,
-) {
-    let mut ships_by_team = EnumMap::from_iter({
-        let (friend_ships, enemy_ships) = ships
-            .into_iter()
-            .partition::<Vec<_>, _>(|&(_, &team, _, _, _, _)| team == Team::Friend);
-        [(Team::Friend, friend_ships), (Team::Enemy, enemy_ships)]
-    });
-
-    for (team, ship_idx, turret_idx) in [Team::Friend, Team::Enemy]
-        .into_iter()
-        .flat_map(|team| (0..ships_by_team[team].len()).map(move |idx| (team, idx)))
-        .flat_map(|(team, ship_idx)| {
-            (0..ships_by_team[team][ship_idx].2.turrets.len())
-                .map(move |turret_idx| (team, ship_idx, turret_idx))
-        })
-        .collect_vec()
-    {
-        let (targ_trans, targ_vel) = {
-            let targ = ships_by_team[team][ship_idx].5.and_then(|targ| {
-                ships_by_team[team.opposite()]
-                    .iter()
-                    .find(|(ship, _, _, _, _, _)| *ship == targ.ship)
-            });
-
-            let Some((_, _, _, targ_trans, targ_vel, _)) = targ else {
-                let turret = &mut ships_by_team[team][ship_idx].2.turrets[turret_idx];
-                if !turret.reload_timer.finished() {
-                    turret.reload_timer.tick(time.delta());
-                }
-                continue;
-            };
-            (targ_trans, targ_vel)
-        };
-        let targ_trans = **targ_trans;
-        let targ_vel = **targ_vel;
-
-        let (ship_entity, _ship_team, ship, ship_trans, _ship_vel, _ship_targ) =
-            &mut ships_by_team[team][ship_idx];
-        let turret = &mut ship.turrets[turret_idx];
-
-        let origin_pos = ship_trans.translation.truncate()
-            + Vec2::from_angle(ship_trans.rotation.to_euler(EulerRot::ZXY).0)
-                .rotate(turret.location_on_ship);
-        let targ_pos = targ_trans.translation.truncate();
-
-        let Some(BulletProblemRes {
-            intersection_point: _,
-            intersection_time: _,
-            intersection_dist,
-            projectile_dir: bullet_dir,
-            projectile_azimuth: bullet_azimuth,
-            projectile_elevation: _,
-        }) = math_utils::bullet_problem(
-            origin_pos,
-            targ_pos,
-            targ_vel.0.truncate(),
-            turret.muzzle_vel as f64,
-            rules.gravity as f64,
-        )
-        else {
-            if !turret.reload_timer.finished() {
-                turret.reload_timer.tick(time.delta());
-            }
-            continue;
-        };
-        if intersection_dist >= turret.max_range {
-            if !turret.reload_timer.finished() {
-                turret.reload_timer.tick(time.delta());
-            }
-            continue;
-        }
-
-        for _ in 0..turret.reload_timer.times_finished_this_tick() {
-            for barrel in &turret.barrels {
-                let bullet_vel =
-                    turret.dispersion.apply_dispersion(bullet_dir) * turret.muzzle_vel as f32;
-
-                let bullet_start = origin_pos + Vec2::from_angle(bullet_azimuth).rotate(*barrel);
-                let bullet_trans = Transform {
-                    translation: bullet_start.extend(5.),
-                    rotation: Quat::from_rotation_z(
-                        std::f32::consts::FRAC_PI_2 + bullet_vel.truncate().to_angle(),
-                    ),
-                    ..default()
-                };
-
-                make_bullet(
-                    commands.reborrow(),
-                    *ship_entity,
-                    bullet_trans,
-                    bullet_vel,
-                    turret.damage,
-                    team,
-                    &settings,
-                );
-            }
-        }
-
-        // We want the turret to remain reloaded or continue progressing its
-        // reload when unable to fire, including when there is no target
-        // If we consider the previous checks that the target is shootable,
-        // placing the tick here accounts for the above
-        turret.reload_timer.tick(time.delta());
-    }
+#[derive(Debug, Component, Clone)]
+#[require(Team, Sprite, Transform, Velocity)]
+struct Bullet {
+    owning_ship: Entity,
+    damage: f64,
 }
 
 fn make_bullet(
@@ -562,7 +328,7 @@ fn make_bullet(
     settings: &PlayerSettings,
 ) {
     commands.spawn((
-        StateScoped(InGameState),
+        StateScoped(AppState::InMatch),
         Bullet {
             owning_ship,
             damage,
@@ -592,30 +358,6 @@ fn update_bullet_displays(
         sprite.custom_size =
             Some(vec2(0.5, 2.) * height_scaling * settings.bullet_icon_scale * zoom.0);
     }
-}
-
-fn make_ships(mut commands: Commands) {
-    commands.spawn((
-        StateScoped(InGameState),
-        Ship::bismarck(),
-        Health(10_000.),
-        Team::Friend,
-        Transform {
-            translation: vec2(-300., 60.).extend(0.),
-            ..Default::default()
-        },
-    ));
-
-    commands.spawn((
-        StateScoped(InGameState),
-        Ship::oland(),
-        Health(1000.),
-        Team::Enemy,
-        Transform {
-            translation: vec2(8000., 120.).extend(0.),
-            ..Default::default()
-        },
-    ));
 }
 
 fn make_camera(mut commands: Commands) {
@@ -919,33 +661,6 @@ fn update_ship_velocity(ships: Query<(&Ship, &Transform, &mut Velocity, Option<&
     }
 }
 
-fn toggle_paused(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    curr_app_state: Res<State<AppState>>,
-    mut next_app_state: ResMut<NextState<AppState>>,
-) {
-    if keyboard.just_pressed(KeyCode::KeyP) && only_modifier_keys_pressed(keyboard, []) {
-        let s = curr_app_state.clone();
-
-        next_app_state.set(match s {
-            AppState::InGame { paused } => AppState::InGame { paused: !paused },
-            _ => unreachable!(),
-        })
-    }
-}
-
-fn detect_game_end(
-    ships: Query<(Entity, &Health, &Team, &Ship)>,
-    mut next_app_state: ResMut<NextState<AppState>>,
-) {
-    let num_friendly = ships.iter().filter(|x| x.2.is_friend()).count();
-    let num_enemy = ships.iter().filter(|x| x.2.is_enemy()).count();
-    if num_enemy == 0 || num_friendly == 0 {
-        println!("GAME FINISHED! friends={num_friendly};enemies={num_enemy}");
-        next_app_state.set(AppState::PostGame);
-    }
-}
-
 pub fn run() {
     // Note: if system A depends on system B or if system A is run in a later schedule (i.e. `Update` after `PreUpdate`),
     // then the `Commands` buffer will be flushed between system A and B
@@ -961,7 +676,6 @@ pub fn run() {
         //
         .init_resource::<PlayerSettings>()
         .init_resource::<CursorWorldPos>()
-        .init_resource::<GameRules>()
         .init_resource::<MapZoom>()
         //
         .insert_state(AppState::ConnectingToServer)
@@ -979,7 +693,7 @@ pub fn run() {
             ),
         )
         .add_systems(OnEnter(InGameState), (make_ships))
-        .add_systems(Update, (toggle_paused).run_if(in_state(InGameState)))
+        // .add_systems(Update, (toggle_paused).run_if(in_state(InGameState)))
         .add_systems(
             Update,
             (
@@ -988,24 +702,13 @@ pub fn run() {
                     .after(update_selection)
                     .before(update_ship_velocity),
                 update_ai_moves.before(update_ship_velocity),
-                update_ship_velocity.before(apply_velocity),
-                move_bullets,
                 apply_velocity,
-                collide_bullets.after(move_bullets).after(apply_velocity),
-                update_detected_ships
-                    .after(apply_velocity)
-                    .after(collide_bullets),
-                update_ship_ghosts.after(update_detected_ships),
+                update_ship_ghosts,
                 update_ship_ghosts_display.after(update_ship_ghosts),
                 update_camera,
                 draw_background.after(update_camera),
-                update_bullet_displays.after(collide_bullets),
-                update_ship_displays.after(update_detected_ships),
-                update_ai_ship_targets
-                    .after(update_detected_ships)
-                    .before(fire_bullets),
-                fire_bullets.after(update_detected_ships),
-                detect_game_end.after(collide_bullets),
+                update_bullet_displays,
+                update_ship_displays,
             )
                 .run_if(in_state(AppState::InGame { paused: false })),
         )

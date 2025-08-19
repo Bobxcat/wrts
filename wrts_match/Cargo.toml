@@ -4,7 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0.99"
 wrts_messaging = { path = "../wrts_messaging" }
+wrts_match_shared = { path = "../wrts_match_shared" }
 bevy = { version = "0.16.1", features = ["track_location"] }
+anyhow = "1.0.99"
 itertools = "0.14.0"
+enum-map = "2.7.3"
+num-complex = "0.4.6"
+rand = "0.9.1"
+rand_distr = "0.5.1"
+slotmap = "1.0.7"

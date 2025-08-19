@@ -1,4 +1,5 @@
 //! Important math functions
+mod generated_bullet_problem_solution;
 
 use bevy::{
     math::{DVec2, dvec3},
@@ -109,7 +110,6 @@ pub struct BulletProblemRes {
 
 /// Calculates the direction of firing and intersection point of a projectile launched at a ship moving at a constant velocity
 /// The projectile has constant lateral speed and is affected by gravity, so it's assumed to follow a parabola
-#[cfg(none)]
 pub fn bullet_problem(
     projectile_start: Vec2,
     ship_start: Vec2,
@@ -120,9 +120,8 @@ pub fn bullet_problem(
     let p = (ship_start - projectile_start).as_dvec2();
     let v = ship_vel.as_dvec2();
 
-    let t = crate::generated_bullet_problem_solution::GENERATED_CODE(
-        gravity, p.x, p.y, muzzle_vel, v.x, v.y,
-    );
+    let t =
+        generated_bullet_problem_solution::GENERATED_CODE(gravity, p.x, p.y, muzzle_vel, v.x, v.y);
     let t = (t.is_finite() && t.im.abs() <= 0.0000001).then_some(t.re)?;
 
     let intersection = p + v * t;
@@ -160,42 +159,4 @@ pub fn bullet_problem(
         projectile_azimuth: azimuth as f32,
         projectile_elevation: elevation as f32,
     })
-}
-
-/// Calculates the time of intersection with newton's method
-pub(crate) fn _bullet_problem_newtons(g: f64, p: DVec2, muzzle_vel: f64, v: DVec2) -> Complex<f64> {
-    let s_p = Complex::from(muzzle_vel);
-    let g = Complex::from(g);
-
-    let t_proj = |dist: Complex<f64>| -> Complex<f64> {
-        Complex::from(1. / muzzle_vel)
-            * dist
-            * Complex::sqrt(
-                Complex::from(0.25)
-                    * dist.powi(2)
-                    * g.powi(2)
-                    * (Complex::from(0.5)
-                        * (s_p.powi(2) + Complex::sqrt(s_p.powi(4) - dist.powi(2) * g.powi(2))))
-                    .powi(-2)
-                    + Complex::from(1.),
-            )
-    };
-    let t_err = |t_est: Complex<f64>| -> Complex<f64> {
-        let x = Complex::from(p.x) + Complex::from(v.x) * t_est;
-        let y = Complex::from(p.y) + Complex::from(v.y) * t_est;
-        let dist = Complex::sqrt(x * x + y * y);
-        t_proj(dist) - t_est
-    };
-
-    let mut t = Complex::new(1., 0.);
-    for _ in 0..10 {
-        // Newton's method with a computed derivative
-        // Note: t_err is a pretty smooth function so the delta doesn't need to be too small
-        const DERIV_DELTA: f64 = 0.00001;
-        let t_err_value = t_err(t);
-        let t_err_derivative = (t_err(t + DERIV_DELTA) - t_err_value) / DERIV_DELTA;
-        t = t - t_err_value / t_err_derivative;
-    }
-
-    t
 }

@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use bevy::prelude::*;
 use wrts_messaging::{Client2Match, ClientSharedInfo, Match2Client, Message};
 
@@ -28,12 +30,12 @@ fn send_echo_msg(
     mut timer: Local<Option<Timer>>,
     time: Res<Time>,
 ) {
-    let timer = timer.get_or_insert(Timer::from_seconds(4., TimerMode::Repeating));
+    let timer = timer.get_or_insert(Timer::from_seconds(10., TimerMode::Repeating));
     timer.tick(time.delta());
     if timer.just_finished() {
         let _ = server.send(Message::Client2Match(Client2Match::Echo(format!(
             "Echo from {:?}",
-            time.elapsed()
+            Instant::now()
         ))));
     }
 }

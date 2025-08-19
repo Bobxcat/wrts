@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::{AppState, InGameState};
+use crate::AppState;
 
 pub struct InGameUIPlugin;
 
@@ -13,7 +13,7 @@ impl Plugin for InGameUIPlugin {
 
 #[derive(SubStates, Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 #[states(scoped_entities)]
-#[source(InGameState = InGameState)]
+#[source(AppState = AppState::InMatch)]
 pub enum InGameUIState {
     #[default]
     BasicUI,

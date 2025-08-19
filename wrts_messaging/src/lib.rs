@@ -14,6 +14,9 @@ use wtransport::{RecvStream, SendStream};
 pub const DEFAULT_PORT: u16 = 4433;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct SharedEntityId(pub u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ClientId(pub u32);
 
 impl Display for ClientId {
@@ -41,9 +44,20 @@ pub enum Client2Match {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Match2Client {
-    InitA { your_client: ClientId },
-    InitC { all_clients: Vec<ClientSharedInfo> },
+    InitA {
+        your_client: ClientId,
+    },
+    InitC {
+        all_clients: Vec<ClientSharedInfo>,
+    },
     PrintMsg(String),
+    DestroyEntity(SharedEntityId),
+    SpawnShip {
+        //
+    },
+    UpdateShipInfo {
+        //
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -80,6 +94,7 @@ pub enum Message {
     Lobby2Client(Lobby2Client),
 }
 
+/// Wraps a message so it can be sent to/from a `wrts_match` instance
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WrtsMatchMessage {
     /// Refers to either
