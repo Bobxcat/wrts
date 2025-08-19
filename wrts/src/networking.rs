@@ -4,11 +4,11 @@ use crate::{AppState, PlayerSettings};
 use anyhow::{Result, anyhow};
 use bevy::{log::tracing::Instrument, prelude::*};
 use tokio::sync::mpsc;
-use wrts_messaging::{Client2Lobby, ClientId, Lobby2Client, Message};
+use wrts_messaging::{Client2Lobby, ClientId, Lobby2Client, Message, RecvFromStream, SendToStream};
 use wtransport::{ClientConfig, Endpoint};
 
 #[derive(Component, Debug, Clone)]
-pub struct ClientInfo {
+pub struct LobbyClientInfo {
     pub id: ClientId,
     pub user: String,
 }

@@ -24,12 +24,12 @@ impl Display for ClientId {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Client2Match {
-    //
+    Echo(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Match2Client {
-    //
+    PrintMsg(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -65,6 +65,20 @@ pub enum Message {
     Match2Client(Match2Client),
     Client2Lobby(Client2Lobby),
     Lobby2Client(Lobby2Client),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WrtsMatchMessage {
+    /// Refers to either
+    /// * The target client of the message
+    /// * The client that sent the message
+    pub client: ClientId,
+    pub msg: Message,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WrtsMatchInitMessage {
+    pub clients: [ClientId; 2],
 }
 
 #[pin_project]
@@ -147,76 +161,147 @@ impl tokio::io::AsyncWrite for TokioWebTransportCompat<'_, tokio::process::Child
     }
 }
 
-impl Message {
-    pub async fn send<'a, T: 'a>(&self, stream: &'a mut T) -> Result<()>
+#[allow(async_fn_in_trait)]
+pub trait SendToStream {
+    async fn send<'a, T: 'a>(&self, stream: &'a mut T) -> Result<()>
+    where
+        TokioWebTransportCompat<'a, T>: tokio::io::AsyncWrite;
+    fn send_sync<T>(&self, stream: &mut T) -> Result<()>
+    where
+        T: std::io::Write;
+}
+
+impl<M> SendToStream for M
+where
+    M: Serialize,
+{
+    async fn send<'a, T: 'a>(&self, stream: &'a mut T) -> Result<()>
     where
         TokioWebTransportCompat<'a, T>: tokio::io::AsyncWrite,
     {
-        serialize_to_stream(self, stream).await
+        write_to_stream_async(self, stream).await
     }
 
-    pub async fn recv<'a, T: 'a>(stream: &'a mut T) -> Result<Self>
+    fn send_sync<T>(&self, stream: &mut T) -> Result<()>
+    where
+        T: std::io::Write,
+    {
+        write_to_stream_sync(self, stream)
+    }
+}
+
+#[allow(async_fn_in_trait)]
+pub trait RecvFromStream: Sized {
+    async fn recv<'a, T: 'a>(stream: &'a mut T) -> Result<Self>
+    where
+        TokioWebTransportCompat<'a, T>: tokio::io::AsyncRead;
+    fn recv_sync<T>(stream: &mut T) -> Result<Self>
+    where
+        T: std::io::Read;
+}
+
+impl<M> RecvFromStream for M
+where
+    M: DeserializeOwned,
+{
+    async fn recv<'a, T: 'a>(stream: &'a mut T) -> Result<Self>
     where
         TokioWebTransportCompat<'a, T>: tokio::io::AsyncRead,
     {
-        deserialize_from_stream(stream).await
+        read_from_stream_async(stream).await
     }
-}
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct WrtsMatchMessage {
-    /// Refers to either
-    /// * The target client of the message
-    /// * The client that sent the message
-    pub client: ClientId,
-    pub msg: Message,
-}
-
-impl WrtsMatchMessage {
-    pub async fn send<'a, T: 'a>(&self, stream: &'a mut T) -> Result<()>
+    fn recv_sync<T>(stream: &mut T) -> Result<Self>
     where
-        TokioWebTransportCompat<'a, T>: tokio::io::AsyncWrite,
+        T: std::io::Read,
     {
-        serialize_to_stream(self, stream).await
-    }
-
-    pub async fn recv<'a, T: 'a>(stream: &'a mut T) -> Result<Self>
-    where
-        TokioWebTransportCompat<'a, T>: tokio::io::AsyncRead,
-    {
-        deserialize_from_stream(stream).await
+        read_from_stream_sync(stream)
     }
 }
 
-pub async fn serialize_to_stream<'a, T: 'a>(msg: &impl Serialize, stream: &'a mut T) -> Result<()>
-where
-    TokioWebTransportCompat<'a, T>: tokio::io::AsyncWrite,
-{
-    let mut stream = TokioWebTransportCompat::<'a, T>::from(stream);
-    let bytes = serde_json::to_vec(msg)?;
-    let length_prefix: [u8; 4] = (bytes.len() as u32).to_be_bytes();
-    stream.write_all(&length_prefix).await?;
-    stream.write_all(&bytes).await?;
-    Ok(())
+mod serialize_maybe_sync_macro {
+    #[macro_export]
+    macro_rules! maybe_sync_read_write {
+        (read async $stream:ident, $buf:ident) => {
+            tokio::io::AsyncReadExt::read_exact(&mut $stream, &mut $buf).await?;
+            // $stream.read_exact(&mut $buf).await?;
+        };
+        (read $stream:ident, $buf:ident) => {
+            std::io::Read::read_exact(&mut $stream.x, &mut $buf)?;
+        };
+        (write async $stream:ident, $buf:ident) => {
+            tokio::io::AsyncWriteExt::write_all(&mut $stream, &$buf).await?;
+            // $stream.write_all(&$buf).await?;
+        };
+        (write $stream:ident, $buf:ident) => {
+            std::io::Write::write_all(&mut $stream.x, &$buf)?;
+        };
+    }
+
+    #[macro_export]
+    macro_rules! serialize_maybe_sync {
+        (async de $func_name:ident) => {
+            serialize_maybe_sync!{
+                ___internal; de, async, $func_name, { TokioWebTransportCompat<'a, T>: tokio::io::AsyncRead }
+            }
+        };
+        (sync de $func_name:ident) => {
+            serialize_maybe_sync!{
+                ___internal; de,, $func_name, { T: std::io::Read }
+            }
+        };
+        (async ser $func_name:ident) => {
+            serialize_maybe_sync!{
+                ___internal; ser, async, $func_name, { TokioWebTransportCompat<'a, T>: tokio::io::AsyncWrite }
+            }
+        };
+        (sync ser $func_name:ident) => {
+            serialize_maybe_sync!{
+                ___internal; ser,, $func_name, { T: std::io::Write }
+            }
+        };
+
+        {___internal; de, $($async:ident)?, $func_name:ident, {$($stream_trait_bound:tt)*}} => {
+            pub $($async)? fn $func_name<'a, T: 'a, M: DeserializeOwned>(stream: &'a mut T) -> anyhow::Result<M>
+            where
+                $($stream_trait_bound)*
+            {
+                let mut stream = TokioWebTransportCompat::<'a, T>::from(stream);
+                let length_prefix = {
+                    let mut buf: [u8; 4] = [0; 4];
+                    // stream.read_exact(&mut buf).await?;
+                    maybe_sync_read_write!(read $($async)? stream, buf);
+                    u32::from_be_bytes(buf)
+                };
+                let limit = 1024 * 1024;
+                if length_prefix > limit {
+                    return Err(anyhow!(
+                        "A message was recieved of length: {length_prefix}b! The limit is {limit}b"
+                    ));
+                }
+                let mut data = vec![0u8; length_prefix as usize];
+                // stream.read_exact(&mut data).await?;
+                maybe_sync_read_write!(read $($async)? stream, data);
+                Ok(serde_json::from_slice(&data)?)
+            }
+        };
+        {___internal; ser, $($async:ident)?, $func_name:ident, {$($stream_trait_bound:tt)*}} => {
+            pub $($async)? fn $func_name<'a, T: 'a>(msg: &impl serde::Serialize, stream: &'a mut T) -> anyhow::Result<()>
+            where
+                $($stream_trait_bound)*
+            {
+                let mut stream = TokioWebTransportCompat::<'a, T>::from(stream);
+                let bytes = serde_json::to_vec(msg)?;
+                let length_prefix: [u8; 4] = (bytes.len() as u32).to_be_bytes();
+                maybe_sync_read_write!(write $($async)? stream, length_prefix);
+                maybe_sync_read_write!(write $($async)? stream, bytes);
+                Ok(())
+            }
+        };
+    }
 }
 
-pub async fn deserialize_from_stream<'a, T: 'a, M: DeserializeOwned>(stream: &'a mut T) -> Result<M>
-where
-    TokioWebTransportCompat<'a, T>: tokio::io::AsyncRead,
-{
-    let mut stream = TokioWebTransportCompat::<'a, T>::from(stream);
-    let length_prefix = {
-        let mut buf: [u8; 4] = [0; 4];
-        stream.read_exact(&mut buf).await?;
-        u32::from_be_bytes(buf)
-    };
-    let limit = 1024 * 1024;
-    if length_prefix > limit {
-        return Err(anyhow!(
-            "A message was recieved of length: {length_prefix}b! The limit is {limit}b"
-        ));
-    }
-    let mut data = vec![0u8; length_prefix as usize];
-    stream.read_exact(&mut data).await?;
-    Ok(serde_json::from_slice(&data)?)
-}
+serialize_maybe_sync!(sync de read_from_stream_sync);
+serialize_maybe_sync!(async de read_from_stream_async);
+serialize_maybe_sync!(sync ser write_to_stream_sync);
+serialize_maybe_sync!(async ser write_to_stream_async);

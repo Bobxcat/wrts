@@ -8,7 +8,9 @@ use slotmap::SlotMap;
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, error, info_span};
-use wrts_messaging::{ClientId, Message, WrtsMatchMessage};
+use wrts_messaging::{
+    ClientId, Message, RecvFromStream, SendToStream, WrtsMatchInitMessage, WrtsMatchMessage,
+};
 
 use crate::temp_dir::WrtsMatchProcess;
 
@@ -56,6 +58,13 @@ async fn match_instance_router(
     client_channels: HashMap<ClientId, (mpsc::Sender<Message>, mpsc::Receiver<Message>)>,
 ) {
     let mut process = WrtsMatchProcess::spawn().await.unwrap();
+
+    WrtsMatchInitMessage {
+        clients: match_instance.clients,
+    }
+    .send(&mut process.stdin)
+    .await
+    .unwrap();
 
     let (client_tx, mut client_rx): (HashMap<_, _>, Vec<_>) = client_channels
         .into_iter()

@@ -6,7 +6,7 @@ use wrts_messaging::{Client2Lobby, ClientId, Lobby2Client, Message};
 
 use crate::{
     AppState,
-    networking::{ClientInfo, RecvNextErr, ServerConnection},
+    networking::{LobbyClientInfo, RecvNextErr, ServerConnection},
 };
 
 pub struct LobbyUiPlugin;
@@ -58,9 +58,10 @@ pub fn setup_lobby_ui(mut commands: Commands) {
 
 fn lobby_networking(
     mut commands: Commands,
-    clients: Query<(Entity, &ClientInfo)>,
+    clients: Query<(Entity, &LobbyClientInfo)>,
     mut server: ResMut<ServerConnection>,
     mut has_readied: Local<bool>,
+    mut next_state: ResMut<NextState<AppState>>,
 ) -> Option<()> {
     let mut clients_by_id: HashMap<ClientId, Entity> =
         clients.into_iter().map(|(e, c)| (c.id, e)).collect();
@@ -90,10 +91,13 @@ fn lobby_networking(
                 username,
             } => {
                 let e = commands
-                    .spawn(ClientInfo {
-                        id: client_id,
-                        user: username,
-                    })
+                    .spawn((
+                        StateScoped(AppState::LobbyMenu),
+                        LobbyClientInfo {
+                            id: client_id,
+                            user: username,
+                        },
+                    ))
                     .id();
                 clients_by_id.insert(client_id, e);
             }
@@ -107,23 +111,23 @@ fn lobby_networking(
                     continue;
                 };
             }
+            Lobby2Client::MatchJoined {} => {
+                next_state.set(AppState::InMatch);
+                return Some(());
+            }
             Lobby2Client::InitialInformation { .. } => {
                 error!("Unexpected message: {msg:?}");
                 return None;
-            }
-            Lobby2Client::MatchJoined {} => {
-                error!("Message not yet handled: {msg:?}");
-                todo!()
             }
         }
     }
 }
 
 fn lobby_networking_none_handler(
-    input: In<Option<()>>,
+    In(input): In<Option<()>>,
     mut next_state: ResMut<NextState<AppState>>,
 ) {
-    if let None = *input {
+    if let None = input {
         info!("`lobby_networking` disconnected");
         next_state.set(AppState::ConnectingToServer);
     }
@@ -133,8 +137,8 @@ fn update_lobby_clients_list(
     mut commands: Commands,
     lists: Query<(Entity, Option<&Children>), With<LobbyClientsList>>,
     list_entries: Query<(Entity, &LobbyClientsListEntry)>,
-    clients_changed: Query<(Entity, &ClientInfo), Changed<ClientInfo>>,
-    clients_all: Query<(Entity, &ClientInfo)>,
+    clients_changed: Query<(Entity, &LobbyClientInfo), Changed<LobbyClientInfo>>,
+    clients_all: Query<(Entity, &LobbyClientInfo)>,
 ) {
     let clients_changed_by_id: HashMap<ClientId, Entity> = clients_changed
         .into_iter()
@@ -144,21 +148,22 @@ fn update_lobby_clients_list(
     let clients_all_by_id: HashMap<ClientId, Entity> =
         clients_all.into_iter().map(|(e, c)| (c.id, e)).collect();
 
-    let spawn_entry_display = |mut commands: Commands, list: Entity, client_info: &ClientInfo| {
-        let disp = commands
-            .spawn((
-                LobbyClientsListEntry {
-                    tracking_client: client_info.id,
-                },
-                Node {
-                    margin: UiRect::all(Val::Px(10.)),
-                    ..default()
-                },
-                Text::new(&format!("Client: {client_info:?}")),
-            ))
-            .id();
-        commands.entity(list).add_child(disp);
-    };
+    let spawn_entry_display =
+        |mut commands: Commands, list: Entity, client_info: &LobbyClientInfo| {
+            let disp = commands
+                .spawn((
+                    LobbyClientsListEntry {
+                        tracking_client: client_info.id,
+                    },
+                    Node {
+                        margin: UiRect::all(Val::Px(10.)),
+                        ..default()
+                    },
+                    Text::new(&format!("Client: {client_info:?}")),
+                ))
+                .id();
+            commands.entity(list).add_child(disp);
+        };
 
     for (list, this_list_entries) in lists {
         let mut clients_displayed: HashSet<ClientId> = HashSet::new();

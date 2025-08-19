@@ -1,18 +1,11 @@
-use std::{
-    fmt::Display,
-    io::{Read, Write},
-    path::PathBuf,
-    process::{self, Stdio},
-    sync::Arc,
-    time::Duration,
-};
+use std::time::Duration;
 
 use anyhow::{Result, anyhow};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, error, info, info_span, level_filters::LevelFilter, warn};
 use tracing_subscriber::EnvFilter;
-use wrts_messaging::{Client2Lobby, ClientId, Lobby2Client, Message};
+use wrts_messaging::{Client2Lobby, ClientId, Lobby2Client, Message, RecvFromStream, SendToStream};
 use wtransport::{Endpoint, Identity, ServerConfig, endpoint::IncomingSession};
 
 use crate::{
@@ -57,7 +50,8 @@ async fn handle_connection(info: NewConnectionInfo) {
     }
     {
         let mut clients = Clients::lock().await;
-        clients.id2info.remove(&client_id);
+        let client_info = clients.id2info.remove(&client_id);
+        assert!(client_info.is_some());
         clients.send(ClientsEvent::ClientLeft { id: client_id });
     }
     abort_token.cancel();
@@ -126,7 +120,7 @@ async fn handle_connection_inner(
         clients.subscribe()
     };
 
-    let (mut client_tx, mut client_rx) = {
+    let (client_tx, mut client_rx) = {
         let (handler2client_tx, mut handler2client_rx) = mpsc::channel::<Message>(64);
         let (client2handler_tx, client2handler_rx) = mpsc::channel::<Message>(64);
 
@@ -280,7 +274,7 @@ async fn handle_connection_inner(
                     mm_msg = mm_subscription.rx.recv() => {
                         let mm_msg = mm_msg.ok_or(anyhow!("Matchmaker disconnected"))?;
                         match mm_msg {
-                            Matchmaker2ClientHandler::MatchJoined { match_id: _, match_instance_tx, match_instance_rx } => {
+                            Matchmaker2ClientHandler::MatchJoined { .. } => {
                                 return Err(anyhow!("Matchmaker sent `MatchJoined` message when client already in match"))
                             },
                         }

@@ -1,4 +1,5 @@
 mod generated_bullet_problem_solution;
+mod in_match;
 mod math_utils;
 mod networking;
 mod ship;
@@ -20,6 +21,7 @@ use itertools::Itertools;
 use ordered_float::OrderedFloat;
 
 use crate::{
+    in_match::InMatchPlugin,
     math_utils::BulletProblemRes,
     networking::NetworkingPlugin,
     ship::Ship,
@@ -35,6 +37,9 @@ use crate::{
 pub enum AppState {
     ConnectingToServer,
     LobbyMenu,
+    InMatch,
+
+    // OLD
     MainMenu,
     InGame { paused: bool },
     PostGame,
@@ -950,8 +955,9 @@ pub fn run() {
         //
         .add_plugins(MainMenuUIPlugin)
         .add_plugins(InGameUIPlugin)
-        .add_plugins(NetworkingPlugin)
         .add_plugins(LobbyUiPlugin)
+        .add_plugins(NetworkingPlugin)
+        .add_plugins(InMatchPlugin)
         //
         .init_resource::<PlayerSettings>()
         .init_resource::<CursorWorldPos>()
