@@ -22,20 +22,34 @@ impl Display for ClientId {
     }
 }
 
+/// Basic __immutable__ info associated with a client,
+/// established when first connecting
+///
+/// Copies of this data are safe to hold and trust for the duration
+/// of a client's connection, since it's immutable
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientSharedInfo {
+    pub id: ClientId,
+    pub user: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Client2Match {
+    InitB { info: ClientSharedInfo },
     Echo(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Match2Client {
+    InitA { your_client: ClientId },
+    InitC { all_clients: Vec<ClientSharedInfo> },
     PrintMsg(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Client2Lobby {
     /// Handshake part B
-    InitialInformationResponse {
+    InitB {
         username: String,
     },
     SetReadyForMatch {
@@ -46,12 +60,11 @@ pub enum Client2Lobby {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Lobby2Client {
     /// Handshake part A
-    InitialInformation {
+    InitA {
         client_id: ClientId,
     },
     ClientJoined {
-        client_id: ClientId,
-        username: String,
+        info: ClientSharedInfo,
     },
     ClientLeft {
         client_id: ClientId,

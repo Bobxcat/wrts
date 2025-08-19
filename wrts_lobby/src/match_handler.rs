@@ -7,7 +7,7 @@ use itertools::Itertools;
 use slotmap::SlotMap;
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, error, info_span};
+use tracing::{Instrument, error, info_span, warn};
 use wrts_messaging::{
     ClientId, Message, RecvFromStream, SendToStream, WrtsMatchInitMessage, WrtsMatchMessage,
 };
@@ -75,12 +75,12 @@ async fn match_instance_router(
         async move {
             loop {
                 let Ok(msg) = WrtsMatchMessage::recv(&mut process.stdout).await else {
-                    error!("Match instance closed down");
+                    warn!("Match instance closed down");
                     return;
                 };
 
                 if let Err(_) = client_tx[&msg.client].send(msg.msg).await {
-                    error!("Client closed down");
+                    warn!("Client closed down");
                     return;
                 }
             }
@@ -88,25 +88,29 @@ async fn match_instance_router(
     });
 
     'main_loop: loop {
+        // Without yielding, this task wouldn't await until a client sends a message
+        tokio::task::yield_now().await;
+
         for (client_id, rx) in &mut client_rx {
-            match rx.try_recv() {
-                Ok(msg) => {
-                    let res = WrtsMatchMessage {
-                        client: *client_id,
-                        msg,
-                    }
-                    .send(&mut process.stdin)
-                    .await;
-                    if let Err(e) = res {
-                        error!(
-                            "Error sending message to match instance {:?}: {e}",
-                            match_instance.id
-                        );
-                        break 'main_loop;
-                    }
-                }
-                Err(mpsc::error::TryRecvError::Empty) => (),
+            let msg = match rx.try_recv() {
+                Ok(msg) => msg,
+                Err(mpsc::error::TryRecvError::Empty) => continue,
                 Err(mpsc::error::TryRecvError::Disconnected) => break 'main_loop,
+            };
+
+            let res = WrtsMatchMessage {
+                client: *client_id,
+                msg,
+            }
+            .send(&mut process.stdin)
+            .await;
+
+            if let Err(e) = res {
+                warn!(
+                    "Error sending message to match instance {:?}: {e}",
+                    match_instance.id
+                );
+                break 'main_loop;
             }
         }
     }
@@ -177,7 +181,7 @@ async fn matchmaker_runner(mm: Arc<Mutex<Matchmaker>>) {
         }
 
         for cl in clients_disconnected {
-            error!("Disconnected: {cl}");
+            warn!("Disconnected: {cl}");
             mm.connected_clients.remove(&cl);
         }
 

@@ -4,7 +4,7 @@ use std::{
 };
 
 use tokio::sync::{Mutex, broadcast};
-use wrts_messaging::ClientId;
+use wrts_messaging::{ClientId, ClientSharedInfo};
 
 /// When a `ClientsEvent` is received,
 /// the listed changes must reflect the `Clients` data
@@ -20,14 +20,16 @@ pub enum ClientsEvent {
     ClientLeft { id: ClientId },
 }
 
+/// Includes both the immutable and shared `ClientInfo`
+/// and mutable data about the client, for which the lobby server
+/// is the authoritative source
 #[derive(Debug, Clone)]
-pub struct ClientInfo {
-    pub id: ClientId,
-    pub user: String,
+pub struct ClientData {
+    pub info: ClientSharedInfo,
 }
 
 pub struct Clients {
-    pub id2info: HashMap<ClientId, ClientInfo>,
+    pub id2info: HashMap<ClientId, ClientData>,
     events: broadcast::Sender<ClientsEvent>,
 }
 

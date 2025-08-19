@@ -7,8 +7,12 @@ use tokio::sync::mpsc;
 use wrts_messaging::{Client2Lobby, ClientId, Lobby2Client, Message, RecvFromStream, SendToStream};
 use wtransport::{ClientConfig, Endpoint};
 
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThisClient(pub ClientId);
+
+/// Note that all `ClientInfo`s are cleared when leaving [AppState::LobbyMenu] or [AppState::InMatch]
 #[derive(Component, Debug, Clone)]
-pub struct LobbyClientInfo {
+pub struct ClientInfo {
     pub id: ClientId,
     pub user: String,
 }
@@ -46,6 +50,7 @@ impl ServerConnection {
     }
 
     /// `None` means the server is disconnected
+    #[must_use]
     pub fn send(&mut self, msg: Message) -> Option<()> {
         if self.disconnected() {
             return None;
@@ -61,6 +66,7 @@ impl ServerConnection {
     /// in the order that they were sent
     ///
     /// `None` means the server is disconnected
+    #[must_use]
     pub fn recv_all(&mut self) -> Option<Vec<Message>> {
         if self.disconnected() {
             return None;
@@ -78,6 +84,7 @@ impl ServerConnection {
         }
     }
 
+    #[must_use]
     pub fn recv_next(&mut self) -> Result<Message, RecvNextErr> {
         if self.disconnected() {
             return Err(RecvNextErr::Disconnected);
@@ -90,6 +97,19 @@ impl ServerConnection {
                 return Err(RecvNextErr::Disconnected);
             }
         }
+    }
+
+    /// `None` means the server is disconnected
+    #[must_use]
+    pub fn recv_blocking(&mut self) -> Option<Message> {
+        if self.disconnected() {
+            return None;
+        }
+        let res = self.rx.blocking_recv();
+        if res.is_none() {
+            self.disconnection_triggered = true;
+        }
+        res
     }
 }
 
@@ -171,20 +191,6 @@ fn setup_connecting_to_network_ui(mut commands: Commands) {
                     TextColor(text_color),
                     ImageNode::solid_color(Color::WHITE),
                 ),
-                // (
-                //     JoinStateDisplay,
-                //     Node {
-                //         margin: UiRect::all(Val::Px(50.0)),
-                //         ..default()
-                //     },
-                //     Text::new("..."),
-                //     TextFont {
-                //         font_size: 67.0,
-                //         ..default()
-                //     },
-                //     TextColor(text_color),
-                //     ImageNode::solid_color(Color::WHITE),
-                // ),
             ]
         ),],
     ));
@@ -219,20 +225,20 @@ fn update_join_server_button(
             };
             network_start(info);
 
-            let Message::Lobby2Client(Lobby2Client::InitialInformation {
+            let Message::Lobby2Client(Lobby2Client::InitA {
                 client_id: this_client,
             }) = rx.blocking_recv().unwrap()
             else {
                 todo!()
             };
 
+            commands.insert_resource(ThisClient(this_client));
+
             info!("Client ID assigned: {this_client}");
 
-            tx.blocking_send(Message::Client2Lobby(
-                Client2Lobby::InitialInformationResponse {
-                    username: settings.username.clone(),
-                },
-            ))
+            tx.blocking_send(Message::Client2Lobby(Client2Lobby::InitB {
+                username: settings.username.clone(),
+            }))
             .unwrap();
 
             commands.insert_resource(ServerConnection {
@@ -304,7 +310,6 @@ async fn network_start_async(
                     error!("EXIT: bevy closed");
                     return;
                 };
-                info!("TO_SEND={msg:?}");
                 if let Err(err) = msg.send(&mut to_server).await {
                     error!("EXIT: {err}");
                     let _ = network_failure_handle.send(()).await;
@@ -323,10 +328,7 @@ async fn network_start_async(
                     network_failure.closed().await;
                 };
                 let msg = match Message::recv(&mut from_server).await {
-                    Ok(msg) => {
-                        info!("RECV={msg:?}");
-                        msg
-                    }
+                    Ok(msg) => msg,
                     Err(err) => {
                         error!("EXIT: {err}");
                         let _ = network_failure.send(()).await;

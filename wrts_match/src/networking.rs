@@ -24,7 +24,7 @@ pub fn read_messages(
             Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Disconnected) => {
                 error!("Messaging disconnected, exiting");
-                exit.write(AppExit::Error(1.try_into().unwrap()));
+                exit.write(AppExit::from_code(1));
                 return;
             }
         };
@@ -35,10 +35,13 @@ pub fn read_messages(
                     msg: Message::Match2Client(Match2Client::PrintMsg(s)),
                 }) {
                     error!("Messaging disconnected, exiting");
-                    exit.write(AppExit::Error(1.try_into().unwrap()));
+                    exit.write(AppExit::from_code(1));
                 }
             }
-            Message::Match2Client(_) | Message::Client2Lobby(_) | Message::Lobby2Client(_) => {
+            Message::Client2Match(Client2Match::InitB { .. })
+            | Message::Match2Client(_)
+            | Message::Client2Lobby(_)
+            | Message::Lobby2Client(_) => {
                 error!("Received unexpected message: {msg:?}");
             }
         };

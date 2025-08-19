@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     io::{Write, stdin},
     ops::{Deref, DerefMut},
     sync::mpsc::{self, Receiver, SyncSender},
@@ -8,8 +9,8 @@ use bevy::{
     log::LogPlugin, prelude::*, render::RenderPlugin, window::ExitCondition, winit::WinitPlugin,
 };
 use wrts_messaging::{
-    ClientId, RecvFromStream, WrtsMatchInitMessage, WrtsMatchMessage, read_from_stream_sync,
-    write_to_stream_sync,
+    Client2Match, ClientId, ClientSharedInfo, Match2Client, Message, RecvFromStream,
+    WrtsMatchInitMessage, WrtsMatchMessage, read_from_stream_sync, write_to_stream_sync,
 };
 
 use crate::networking::NetworkingPlugin;
@@ -80,7 +81,7 @@ impl Deref for MessagesRecv {
 
 #[derive(Component, Debug, Clone)]
 pub struct Client {
-    pub id: ClientId,
+    pub info: ClientSharedInfo,
 }
 
 #[derive(Resource, Debug)]
@@ -88,12 +89,54 @@ struct InitMsgRes {
     init_msg: Option<WrtsMatchInitMessage>,
 }
 
-fn handle_init_msg(mut commands: Commands, mut res: ResMut<InitMsgRes>) {
+fn handle_init_msg(
+    mut commands: Commands,
+    mut res: ResMut<InitMsgRes>,
+    msgs_tx: Res<MessagesSend>,
+    msgs_rx: NonSendMut<MessagesRecv>,
+    mut app_exit: EventWriter<AppExit>,
+) {
     let init_msg = res.init_msg.take().unwrap();
-    for cl in init_msg.clients {
-        commands.spawn(Client { id: cl });
-    }
     commands.remove_resource::<InitMsgRes>();
+
+    let client_infos = {
+        let mut infos = HashMap::new();
+        for cl in init_msg.clients {
+            let _ = msgs_tx.send(WrtsMatchMessage {
+                client: cl,
+                msg: Message::Match2Client(Match2Client::InitA { your_client: cl }),
+            });
+        }
+
+        for _ in 0..init_msg.clients.len() {
+            match msgs_rx.recv() {
+                Ok(WrtsMatchMessage {
+                    client: _,
+                    msg: Message::Client2Match(Client2Match::InitB { info }),
+                }) => {
+                    infos.insert(info.id, info);
+                }
+                res => {
+                    error!(
+                        "Expected one `InitA` message per client assigned to this match! Instead, got: {res:?}"
+                    );
+                    app_exit.write(AppExit::from_code(1));
+                    return;
+                }
+            };
+        }
+        infos
+    };
+
+    for (_, cl_info) in client_infos.clone() {
+        let _ = msgs_tx.send(WrtsMatchMessage {
+            client: cl_info.id,
+            msg: Message::Match2Client(Match2Client::InitC {
+                all_clients: client_infos.values().cloned().collect(),
+            }),
+        });
+        commands.spawn(Client { info: cl_info });
+    }
 }
 
 fn main() -> Result<()> {

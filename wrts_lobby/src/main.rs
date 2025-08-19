@@ -3,13 +3,15 @@ use std::time::Duration;
 use anyhow::{Result, anyhow};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, error, info, info_span, level_filters::LevelFilter, warn};
+use tracing::{Instrument, debug, error, info, info_span, level_filters::LevelFilter, warn};
 use tracing_subscriber::EnvFilter;
-use wrts_messaging::{Client2Lobby, ClientId, Lobby2Client, Message, RecvFromStream, SendToStream};
+use wrts_messaging::{
+    Client2Lobby, ClientId, ClientSharedInfo, Lobby2Client, Message, RecvFromStream, SendToStream,
+};
 use wtransport::{Endpoint, Identity, ServerConfig, endpoint::IncomingSession};
 
 use crate::{
-    clients::{ClientInfo, Clients, ClientsEvent},
+    clients::{ClientData, Clients, ClientsEvent},
     match_handler::{
         ClientHandler2Matchmaker, ClientHandlerMatchmakerSubscription, Matchmaker,
         Matchmaker2ClientHandler,
@@ -41,12 +43,13 @@ struct NewConnectionInfo {
 }
 
 async fn handle_connection(info: NewConnectionInfo) {
+    info!("Handling new client connection");
     let client_id = info.client_id;
     let abort_token = CancellationToken::new();
     let exit = handle_connection_inner(info, abort_token.clone()).await;
     match exit {
         Ok(()) => info!("{client_id} Exited successfully"),
-        Err(err) => error!("{client_id} Exited with error: `{err}`"),
+        Err(err) => info!("{client_id} Exited with error: `{err}`"),
     }
     {
         let mut clients = Clients::lock().await;
@@ -65,11 +68,11 @@ async fn handle_connection_inner(
     }: NewConnectionInfo,
     abort_token: CancellationToken,
 ) -> Result<()> {
-    info!("Waiting for session request...");
+    debug!("Waiting for session request...");
 
     let session_request = incoming_session.await?;
 
-    info!(
+    debug!(
         "New session: Authority: '{}', Path: '{}'",
         session_request.authority(),
         session_request.path()
@@ -77,42 +80,42 @@ async fn handle_connection_inner(
 
     let connection = session_request.accept().await?;
 
-    info!("Remote address: `{}`", connection.remote_address());
+    debug!("Remote address: `{}`", connection.remote_address());
 
-    info!("Waiting for stream to be accepted by client...");
+    debug!("Waiting for stream to be accepted by client...");
     let (mut tx, mut rx) = connection.accept_bi().await?;
 
-    info!("Sending client initial information");
+    debug!("Sending client initial information");
 
-    Message::Lobby2Client(Lobby2Client::InitialInformation { client_id })
+    Message::Lobby2Client(Lobby2Client::InitA { client_id })
         .send(&mut tx)
         .await?;
 
-    let Message::Client2Lobby(Client2Lobby::InitialInformationResponse { username }) =
-        Message::recv(&mut rx).await?
+    let Message::Client2Lobby(Client2Lobby::InitB { username }) = Message::recv(&mut rx).await?
     else {
         return Err(anyhow!(
             "Expected network message: `Client2Lobby::InitialInformationResponse`"
         ));
     };
 
-    info!("username selected: `{username}`");
+    debug!("username selected: `{username}`");
 
     let mut clients_events = {
         let mut clients = Clients::lock().await;
         clients.id2info.insert(
             client_id,
-            ClientInfo {
-                id: client_id,
-                user: username,
+            ClientData {
+                info: ClientSharedInfo {
+                    id: client_id,
+                    user: username,
+                },
             },
         );
         clients.send(ClientsEvent::ClientJoined { id: client_id });
         // Note: this loop includes _this_ client
-        for (&cl_id, cl_info) in &clients.id2info {
+        for (&cl_id, cl_data) in &clients.id2info {
             Message::Lobby2Client(Lobby2Client::ClientJoined {
-                client_id: cl_id,
-                username: cl_info.user.clone(),
+                info: cl_data.info.clone(),
             })
             .send(&mut tx)
             .await?;
@@ -137,7 +140,7 @@ async fn handle_connection_inner(
                     tokio::select! {
                         res = msg.send(&mut tx) => {
                             if let Err(err) = res {
-                                error!("Failed to send to client: {err}");
+                                warn!("Failed to send to client: {err}");
                                 break;
                             };
                         }
@@ -161,7 +164,7 @@ async fn handle_connection_inner(
                             let msg = match msg {
                                 Ok(msg) => msg,
                                 Err(err) => {
-                                    error!("Client sent bad message: {err}");
+                                    warn!("Client sent bad message: {err}");
                                     break;
                                 }
                             };
@@ -198,8 +201,10 @@ async fn handle_connection_inner(
                 let clients = Clients::lock().await;
                 client_tx
                     .send(Message::Lobby2Client(Lobby2Client::ClientJoined {
-                        client_id: id,
-                        username: clients.id2info[&id].user.clone(),
+                        info: ClientSharedInfo {
+                            id: id,
+                            user: clients.id2info[&id].info.user.clone(),
+                        },
                     }))
                     .await?;
             }
@@ -222,7 +227,7 @@ async fn handle_connection_inner(
                 .send(ClientHandler2Matchmaker::SetReadyForMatch { is_ready })
                 .await
                 .map_err(|_| anyhow!("Matchmaker disconnnected"))?,
-            Message::Client2Lobby(Client2Lobby::InitialInformationResponse { .. })
+            Message::Client2Lobby(Client2Lobby::InitB { .. })
             | Message::Lobby2Client(_)
             | Message::Client2Match(_)
             | Message::Match2Client(_) => warn!(
