@@ -6165,6 +6165,9 @@ dependencies = [
 name = "wrts_match_shared"
 version = "0.1.0"
 dependencies = [
+ "glam",
+ "paste",
+ "serde",
  "slotmap",
 ]
 
@@ -6173,11 +6176,13 @@ name = "wrts_messaging"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "glam",
  "pin-project",
  "serde",
  "serde_json",
  "slotmap",
  "tokio",
+ "wrts_match_shared",
  "wtransport",
 ]
 

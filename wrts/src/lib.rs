@@ -15,19 +15,18 @@ use bevy::{
     prelude::*,
     window::PrimaryWindow,
 };
-use enum_map::EnumMap;
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
+use wrts_messaging::{Client2Match, ClientId, Message};
 
 use crate::{
-    in_match::InMatchPlugin,
-    math_utils::BulletProblemRes,
-    networking::NetworkingPlugin,
+    in_match::{InMatchPlugin, SharedEntityTracking},
+    networking::{NetworkingPlugin, ServerConnection, ThisClient},
     ship::Ship,
     ui::{
-        in_game::{InGameUIPlugin, InGameUIState},
+        in_game::InGameUIPlugin,
         lobby::LobbyUiPlugin,
-        main_menu::MainMenuUIPlugin,
+        // main_menu::MainMenuUIPlugin,
     },
 };
 
@@ -74,10 +73,10 @@ impl Default for PlayerSettings {
 }
 
 impl PlayerSettings {
-    pub fn team_colors(&self, team: Team) -> &TeamColors {
-        match team {
-            Team::Friend => &self.team_friend_colors,
-            Team::Enemy => &self.team_enemy_colors,
+    pub fn team_colors(&self, team: Team, this_client: ThisClient) -> &TeamColors {
+        match team.is_this_client(this_client) {
+            true => &self.team_friend_colors,
+            false => &self.team_enemy_colors,
         }
     }
 }
@@ -185,82 +184,32 @@ pub struct ShipGhost {
 #[derive(Debug, Default, Resource, Clone, Copy)]
 struct MapZoom(pub f32);
 
-#[derive(Debug, Default, Component, Clone, Copy, PartialEq, Eq, enum_map::Enum)]
-enum Team {
-    #[default]
-    Friend,
-    Enemy,
+/// Component representing "ownership" by a client
+#[derive(Debug, Component, Clone, Copy, PartialEq, Eq)]
+struct Team(pub ClientId);
+
+impl Default for Team {
+    fn default() -> Self {
+        panic!(
+            "Called `Default` for Team. Remember to insert `Team` manually when creating objects!!"
+        );
+    }
 }
 
 impl Team {
-    pub fn opposite(self) -> Self {
-        match self {
-            Team::Friend => Team::Enemy,
-            Team::Enemy => Team::Friend,
-        }
-    }
-
-    pub fn is_friend(self) -> bool {
-        self == Self::Friend
-    }
-
-    pub fn is_enemy(self) -> bool {
-        self == Self::Enemy
-    }
-}
-
-fn apply_velocity(q: Query<(&mut Transform, &Velocity)>, time: Res<Time>) {
-    for (mut trans, vel) in q {
-        trans.translation += vel.0 * time.delta_secs();
-    }
-}
-
-fn update_detected_ships(
-    mut commands: Commands,
-    ships: Query<(
-        Entity,
-        &Ship,
-        &Team,
-        &Transform,
-        Option<&Detected>,
-        Option<&NoLongerDetected>,
-    )>,
-) {
-    for ship in &ships {
-        let mut entity = commands.entity(ship.0);
-        let detection_last_frame = DetectionStatus::from_options(ship.4, ship.5);
-        let is_detected = ships.iter().any(|other_ship| {
-            other_ship.2.opposite() == *ship.2
-                && other_ship
-                    .3
-                    .translation
-                    .truncate()
-                    .distance(ship.3.translation.truncate())
-                    <= ship.1.detection
-        });
-        if is_detected {
-            entity.insert(Detected);
-            if detection_last_frame.is_no_longer() {
-                entity.remove::<NoLongerDetected>();
-            }
-        }
-        if !is_detected && detection_last_frame.is_detected() {
-            entity.insert(NoLongerDetected {
-                last_known: *ship.3,
-            });
-            entity.remove::<Detected>();
-        }
+    pub fn is_this_client(self, this_client: ThisClient) -> bool {
+        self.0 == this_client.0
     }
 }
 
 fn update_ship_ghosts(
     mut commands: Commands,
     ships: Query<(Entity, Option<&Detected>, Option<&NoLongerDetected>, &Team), With<Ship>>,
-
+    this_client: Res<ThisClient>,
     mut current_ghosts: Local<HashMap<Entity, Entity>>,
 ) {
     for ship in ships {
-        if ship.3.is_friend() {
+        if ship.3.is_this_client(*this_client) {
             continue;
         }
         let detection_status = DetectionStatus::from_options(ship.1, ship.2);
@@ -316,28 +265,6 @@ fn update_ship_ghosts_display(
 struct Bullet {
     owning_ship: Entity,
     damage: f64,
-}
-
-fn make_bullet(
-    mut commands: Commands,
-    owning_ship: Entity,
-    trans: Transform,
-    vel: Vec3,
-    damage: f64,
-    team: Team,
-    settings: &PlayerSettings,
-) {
-    commands.spawn((
-        StateScoped(AppState::InMatch),
-        Bullet {
-            owning_ship,
-            damage,
-        },
-        trans,
-        Velocity(vel),
-        team,
-        Sprite::from_color(settings.team_colors(team).ship_color, Vec2::ZERO),
-    ));
 }
 
 fn update_bullet_displays(
@@ -412,6 +339,7 @@ fn update_ship_displays(
         Option<&Detected>,
         Option<&NoLongerDetected>,
     )>,
+    this_client: Res<ThisClient>,
     settings: Res<PlayerSettings>,
     zoom: Res<MapZoom>,
 ) {
@@ -420,7 +348,7 @@ fn update_ship_displays(
         let detection_status = DetectionStatus::from_options(detected, no_longer_detected);
         let sprite_size = vec2(1., 1.) * settings.ship_icon_scale * zoom.0;
 
-        if team.is_enemy() && !detection_status.is_detected() {
+        if !team.is_this_client(*this_client) && !detection_status.is_detected() {
             *sprite = Sprite::default();
             continue;
         } else {
@@ -429,15 +357,22 @@ fn update_ship_displays(
                 false => 1.0,
             };
             *sprite = Sprite::from_color(
-                Color::LinearRgba(settings.team_colors(*team).ship_color.to_linear() * dim)
-                    .with_alpha(1.),
+                Color::LinearRgba(
+                    settings
+                        .team_colors(*team, *this_client)
+                        .ship_color
+                        .to_linear()
+                        * dim,
+                )
+                .with_alpha(1.),
                 sprite_size,
             );
         }
 
-        if *team == Team::Friend || detection_status.is_detected() {
+        if team.is_this_client(*this_client) || detection_status.is_detected() {
             // Gun range circle
             if let Some(t) = ship
+                .template
                 .turrets
                 .iter()
                 .max_by_key(|t| OrderedFloat(t.max_range))
@@ -446,7 +381,9 @@ fn update_ship_displays(
                     .circle_2d(
                         Isometry2d::from_translation(trans.translation.truncate()),
                         t.max_range,
-                        settings.team_colors(*team).gun_range_ring_color,
+                        settings
+                            .team_colors(*team, *this_client)
+                            .gun_range_ring_color,
                     )
                     .resolution(128);
             }
@@ -454,7 +391,7 @@ fn update_ship_displays(
             gizmos
                 .circle_2d(
                     Isometry2d::from_translation(trans.translation.truncate()),
-                    ship.detection,
+                    ship.template.detection,
                     Color::linear_rgb(0.4, 0.4, 0.9),
                 )
                 .resolution(128);
@@ -477,8 +414,11 @@ fn update_selected_ship_orders(
         Option<&FireTarget>,
         Option<&mut MoveOrder>,
     )>,
+    this_client: Res<ThisClient>,
     settings: Res<PlayerSettings>,
     zoom: Res<MapZoom>,
+    shared_entities: Res<SharedEntityTracking>,
+    mut server: ResMut<ServerConnection>,
 ) {
     // Display
     for selected in &ships_selected {
@@ -518,11 +458,13 @@ fn update_selected_ship_orders(
 
     // Orders
     for ship in &mut ships_selected {
+        let mut new_move_order = None;
+
         if mouse.just_pressed(MouseButton::Left)
             && only_modifier_keys_pressed(&keyboard, [KeyCode::ControlLeft])
         {
             if let Some(new_targ) = all_ships.iter().find(|maybe_targ| {
-                *maybe_targ.2 == Team::Enemy
+                !maybe_targ.2.is_this_client(*this_client)
                     && maybe_targ.1.translation.truncate().distance(mouse_pos.0)
                         <= SHIP_SELECTION_SIZE * zoom.0
             }) {
@@ -540,7 +482,7 @@ fn update_selected_ship_orders(
         if mouse.just_pressed(MouseButton::Left)
             && only_modifier_keys_pressed(&keyboard, [KeyCode::AltLeft])
         {
-            commands.entity(ship.0).insert(MoveOrder {
+            new_move_order = Some(MoveOrder {
                 waypoints: vec![mouse_pos.0],
             });
         }
@@ -549,8 +491,9 @@ fn update_selected_ship_orders(
         {
             if let Some(mut move_order) = ship.5 {
                 move_order.waypoints.push(mouse_pos.0);
+                new_move_order = Some(move_order.clone());
             } else {
-                commands.entity(ship.0).insert(MoveOrder {
+                new_move_order = Some(MoveOrder {
                     waypoints: vec![mouse_pos.0],
                 });
             }
@@ -558,7 +501,15 @@ fn update_selected_ship_orders(
         if keyboard.just_pressed(KeyCode::KeyQ)
             && only_modifier_keys_pressed(&keyboard, [KeyCode::AltLeft])
         {
-            commands.entity(ship.0).remove::<MoveOrder>();
+            new_move_order = None;
+        }
+
+        if let Some(move_order) = new_move_order {
+            server.send(Message::Client2Match(Client2Match::SetMoveOrder {
+                id: shared_entities[ship.0],
+                waypoints: move_order.waypoints.clone(),
+            }));
+            commands.entity(ship.0).insert(move_order);
         }
     }
 }
@@ -611,6 +562,7 @@ fn update_selection(
     mouse: Res<ButtonInput<MouseButton>>,
     mouse_pos: Res<CursorWorldPos>,
     zoom: Res<MapZoom>,
+    this_client: Res<ThisClient>,
 ) {
     let old_selection = ships
         .iter()
@@ -621,7 +573,7 @@ fn update_selection(
         && only_modifier_keys_pressed(&keyboard, [KeyCode::ShiftLeft])
     {
         for (ship, ship_trans, _ship_selected, &ship_team) in &ships {
-            if ship_team != Team::Friend {
+            if !ship_team.is_this_client(*this_client) {
                 continue;
             }
             if mouse_pos.0.distance(ship_trans.translation.truncate())
@@ -639,28 +591,6 @@ fn update_selection(
     }
 }
 
-fn update_ship_velocity(ships: Query<(&Ship, &Transform, &mut Velocity, Option<&mut MoveOrder>)>) {
-    for mut ship in ships {
-        if let Some(move_order) = &mut ship.3 {
-            if move_order
-                .waypoints
-                .get(0)
-                .is_some_and(|next| next.distance(ship.1.translation.truncate()) <= 0.5)
-            {
-                move_order.waypoints.remove(0);
-            }
-        }
-        let new_vel = match ship.3 {
-            Some(order) if order.waypoints.len() > 0 => {
-                let dir = (order.waypoints[0] - ship.1.translation.truncate()).normalize();
-                dir * ship.0.speed
-            }
-            _ => Vec2::ZERO,
-        };
-        ship.2.0 = new_vel.extend(0.);
-    }
-}
-
 pub fn run() {
     // Note: if system A depends on system B or if system A is run in a later schedule (i.e. `Update` after `PreUpdate`),
     // then the `Commands` buffer will be flushed between system A and B
@@ -668,7 +598,6 @@ pub fn run() {
         .add_plugins(DefaultPlugins)
         .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
         //
-        .add_plugins(MainMenuUIPlugin)
         .add_plugins(InGameUIPlugin)
         .add_plugins(LobbyUiPlugin)
         .add_plugins(NetworkingPlugin)
@@ -679,30 +608,22 @@ pub fn run() {
         .init_resource::<MapZoom>()
         //
         .insert_state(AppState::ConnectingToServer)
-        .add_computed_state::<InGameState>()
-        .enable_state_scoped_entities::<InGameState>()
         //
-        .add_systems(Startup, (make_camera))
+        .add_systems(Startup, make_camera)
         .add_systems(
             PreUpdate,
             (
                 update_cursor_world_pos.after(InputSystem),
                 update_map_zoom
                     .after(InputSystem)
-                    .run_if(in_state(AppState::InGame { paused: false })),
+                    .run_if(in_state(AppState::InMatch)),
             ),
         )
-        .add_systems(OnEnter(InGameState), (make_ships))
-        // .add_systems(Update, (toggle_paused).run_if(in_state(InGameState)))
         .add_systems(
             Update,
             (
                 update_selection,
-                update_selected_ship_orders
-                    .after(update_selection)
-                    .before(update_ship_velocity),
-                update_ai_moves.before(update_ship_velocity),
-                apply_velocity,
+                update_selected_ship_orders.after(update_selection),
                 update_ship_ghosts,
                 update_ship_ghosts_display.after(update_ship_ghosts),
                 update_camera,
@@ -710,7 +631,7 @@ pub fn run() {
                 update_bullet_displays,
                 update_ship_displays,
             )
-                .run_if(in_state(AppState::InGame { paused: false })),
+                .run_if(in_state(AppState::InMatch)),
         )
         .run();
 }

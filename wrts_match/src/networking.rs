@@ -9,12 +9,15 @@ use wrts_messaging::{
     write_to_stream_sync,
 };
 
+pub use crate::networking::shared_entity_tracking::SharedEntityTracking;
+use crate::{MoveOrder, Team};
+
 pub struct NetworkingPlugin;
 
 impl Plugin for NetworkingPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(PreStartup, network_handshake)
-            .add_systems(FixedUpdate, read_messages);
+            .add_systems(FixedUpdate, (read_messages, send_transform_updates));
     }
 }
 
@@ -43,7 +46,13 @@ fn stdout_handler(rx: Receiver<WrtsMatchMessage>) {
     loop {
         match rx.recv() {
             Ok(msg) => {
-                info!("Sending: {msg:?}");
+                match &msg.msg {
+                    Message::Match2Client(Match2Client::SetEntityPos { .. }) => {
+                        trace!("Sending: {msg:?}")
+                    }
+                    _ => info!("Sending: {msg:?}"),
+                }
+
                 if let Err(e) = write_to_stream_sync(&msg, &mut stdout) {
                     error!("Encountered error sending to stdout: `{:?}`", e)
                 }
@@ -59,6 +68,13 @@ fn stdout_handler(rx: Receiver<WrtsMatchMessage>) {
 
 #[derive(Debug, Resource)]
 pub struct MessagesSend(SyncSender<WrtsMatchMessage>);
+
+impl MessagesSend {
+    pub fn send(&self, msg: WrtsMatchMessage) {
+        SyncSender::send(&self, msg)
+            .expect("`MessagesSend` should never disconnect unless the bevy app has closed down")
+    }
+}
 
 impl Deref for MessagesSend {
     type Target = SyncSender<WrtsMatchMessage>;
@@ -81,50 +97,64 @@ impl Deref for MessagesRecv {
 }
 
 mod shared_entity_tracking {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, ops::Index};
 
     use bevy::ecs::{entity::Entity, resource::Resource};
     use slotmap::{KeyData, SlotMap};
     use wrts_messaging::SharedEntityId;
 
     slotmap::new_key_type! {
-        struct InnerId;
+        struct InnerSharedId;
     }
 
     /// Keeps track of the mapping between
     #[derive(Resource, Debug, Default, Clone)]
     pub struct SharedEntityTracking {
-        id2entity: SlotMap<InnerId, Entity>,
-        entity2id: HashMap<Entity, InnerId>,
+        shared2local: SlotMap<InnerSharedId, Entity>,
+        local2shared: HashMap<Entity, InnerSharedId>,
     }
 
     impl SharedEntityTracking {
-        fn id_to_inner(id: SharedEntityId) -> InnerId {
-            InnerId(KeyData::from_ffi(id.0))
+        fn shared_to_inner(id: SharedEntityId) -> InnerSharedId {
+            InnerSharedId(KeyData::from_ffi(id.0))
         }
 
-        fn inner_to_id(inner: InnerId) -> SharedEntityId {
+        fn inner_to_shared(inner: InnerSharedId) -> SharedEntityId {
             SharedEntityId(inner.0.as_ffi())
         }
 
-        pub fn new() -> Self {
-            Default::default()
+        pub fn insert(&mut self, local: Entity) -> SharedEntityId {
+            let inner = self.shared2local.insert(local);
+            self.local2shared.insert(local, inner);
+            Self::inner_to_shared(inner)
         }
 
-        pub fn insert(&mut self, entity: Entity) -> SharedEntityId {
-            let inner = self.id2entity.insert(entity);
-            self.entity2id.insert(entity, inner);
-            Self::inner_to_id(inner)
+        pub fn remove_by_local(&mut self, local: Entity) -> Option<(SharedEntityId, Entity)> {
+            let id = self.local2shared.remove(&local)?;
+            self.shared2local.remove(id).expect("unreachable");
+            Some((Self::inner_to_shared(id), local))
         }
 
-        pub fn remove_by_entity(&mut self, entity: Entity) -> Option<(SharedEntityId, Entity)> {
-            //
+        pub fn remove_by_shared(
+            &mut self,
+            shared: SharedEntityId,
+        ) -> Option<(SharedEntityId, Entity)> {
+            let e = self.shared2local.remove(Self::shared_to_inner(shared))?;
+            self.local2shared.remove(&e).expect("unreachable");
+            Some((shared, e))
         }
 
-        pub fn remove_by_id(&mut self, id: SharedEntityId) -> Option<(SharedEntityId, Entity)> {
-            let e = self.id2entity.remove(Self::id_to_inner(id))?;
-            self.entity2id.remove(&e).expect("unreachable");
-            Some((id, e))
+        pub fn get_by_shared(&self, shared: SharedEntityId) -> Option<Entity> {
+            self.shared2local
+                .get(Self::shared_to_inner(shared))
+                .copied()
+        }
+
+        pub fn get_by_local(&self, local: Entity) -> Option<SharedEntityId> {
+            self.local2shared
+                .get(&local)
+                .copied()
+                .map(Self::inner_to_shared)
         }
     }
 }
@@ -135,6 +165,10 @@ pub struct ClientInfo {
 }
 
 fn network_handshake(world: &mut World) {
+    info!(
+        "`WrtsMatchMessage` in-memory size: {}b",
+        std::mem::size_of::<WrtsMatchMessage>()
+    );
     let init_msg = WrtsMatchInitMessage::recv_sync(&mut stdin()).unwrap();
 
     let (handler_tx, msgs_rx) = mpsc::sync_channel::<WrtsMatchMessage>(128);
@@ -187,16 +221,24 @@ fn network_handshake(world: &mut World) {
     }
 
     world.insert_resource(MessagesSend(msgs_tx));
+    world.init_resource::<SharedEntityTracking>();
     world.insert_non_send_resource(MessagesRecv(msgs_rx));
 }
 
-pub fn read_messages(
-    rx: NonSend<MessagesRecv>,
-    tx: ResMut<MessagesSend>,
+fn read_messages(
+    mut commands: Commands,
+    msgs_rx: NonSend<MessagesRecv>,
+    msgs_tx: Res<MessagesSend>,
+    shared_entities: Res<SharedEntityTracking>,
     mut exit: EventWriter<AppExit>,
+
+    teams: Query<&Team>,
 ) {
     loop {
-        let WrtsMatchMessage { client, msg } = match rx.try_recv() {
+        let WrtsMatchMessage {
+            client: msg_sender,
+            msg,
+        } = match msgs_rx.try_recv() {
             Ok(msg) => msg,
             Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Disconnected) => {
@@ -207,13 +249,28 @@ pub fn read_messages(
         };
         match msg {
             Message::Client2Match(Client2Match::Echo(s)) => {
-                if let Err(_) = tx.send(WrtsMatchMessage {
-                    client,
+                msgs_tx.send(WrtsMatchMessage {
+                    client: msg_sender,
                     msg: Message::Match2Client(Match2Client::PrintMsg(s)),
-                }) {
-                    error!("Messaging disconnected, exiting");
-                    exit.write(AppExit::from_code(1));
+                });
+            }
+            Message::Client2Match(Client2Match::SetMoveOrder { id, waypoints }) => {
+                let Some(local) = shared_entities.get_by_shared(id) else {
+                    warn!("Client {msg_sender} sent message with bad id: {id:?}");
+                    continue;
+                };
+                if teams
+                    .get(local)
+                    .ok()
+                    .and_then(|team| (team.0 == msg_sender).then_some(()))
+                    .is_none()
+                {
+                    warn!(
+                        "Client {msg_sender} tried to SetMoveOrder on an entity not owned by them"
+                    );
+                    continue;
                 }
+                commands.entity(local).insert(MoveOrder { waypoints });
             }
             Message::Client2Match(Client2Match::InitB { .. })
             | Message::Match2Client(_)
@@ -222,5 +279,27 @@ pub fn read_messages(
                 error!("Received unexpected message: {msg:?}");
             }
         };
+    }
+}
+
+fn send_transform_updates(
+    transforms: Query<(Entity, &Transform), Changed<Transform>>,
+    clients: Query<&ClientInfo>,
+    msgs_tx: Res<MessagesSend>,
+    shared_entities: Res<SharedEntityTracking>,
+) {
+    for (local, trans) in transforms {
+        let Some(shared) = shared_entities.get_by_local(local) else {
+            continue;
+        };
+        for cl in clients {
+            msgs_tx.send(WrtsMatchMessage {
+                client: cl.info.id,
+                msg: Message::Match2Client(Match2Client::SetEntityPos {
+                    id: shared,
+                    pos: trans.translation.truncate(),
+                }),
+            });
+        }
     }
 }

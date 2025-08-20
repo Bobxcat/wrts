@@ -6,19 +6,20 @@ use std::{
 use bevy::{prelude::*, window::ExitCondition};
 use enum_map::EnumMap;
 use itertools::Itertools;
-use wrts_messaging::ClientId;
+use wrts_messaging::{ClientId, Match2Client, Message, WrtsMatchMessage};
 
 use crate::{
     initialize_game::initalize_game,
     math_utils::BulletProblemRes,
-    networking::{ClientInfo, NetworkingPlugin},
-    ship::{Ship, Turret},
+    networking::{ClientInfo, MessagesSend, NetworkingPlugin, SharedEntityTracking},
+    ship::{Ship, apply_dispersion},
 };
 
 mod initialize_game;
 mod math_utils;
 mod networking;
 mod ship;
+mod spawn_entity;
 
 #[derive(Resource)]
 struct GameRules {
@@ -39,7 +40,7 @@ struct Velocity(pub Vec3);
 struct Health(pub f64);
 
 #[derive(Debug, Component, Clone, Copy, PartialEq, Eq, Hash)]
-struct Team(ClientId);
+pub struct Team(pub ClientId);
 
 impl Default for Team {
     fn default() -> Self {
@@ -97,21 +98,41 @@ struct FireTarget {
     ship: Entity,
 }
 
-fn update_ship_velocity(ships: Query<(&Ship, &Transform, &mut Velocity, Option<&mut MoveOrder>)>) {
+fn update_ship_velocity(
+    ships: Query<(
+        &Ship,
+        &Transform,
+        &mut Velocity,
+        Option<&mut MoveOrder>,
+        &Team,
+        Entity,
+    )>,
+    shared_entities: Res<SharedEntityTracking>,
+    msgs_tx: Res<MessagesSend>,
+) {
     for mut ship in ships {
         if let Some(move_order) = &mut ship.3 {
             if move_order
                 .waypoints
                 .get(0)
-                .is_some_and(|next| next.distance(ship.1.translation.truncate()) <= 0.5)
+                .is_some_and(|next| next.distance(ship.1.translation.truncate()) <= 5.)
             {
                 move_order.waypoints.remove(0);
+                if let Some(shared) = shared_entities.get_by_local(ship.5) {
+                    msgs_tx.send(WrtsMatchMessage {
+                        client: ship.4.0,
+                        msg: Message::Match2Client(Match2Client::SetMoveOrder {
+                            id: shared,
+                            waypoints: move_order.waypoints.clone(),
+                        }),
+                    });
+                }
             }
         }
         let new_vel = match ship.3 {
             Some(order) if order.waypoints.len() > 0 => {
                 let dir = (order.waypoints[0] - ship.1.translation.truncate()).normalize();
-                dir * ship.0.speed
+                dir * ship.0.template.max_speed
             }
             _ => Vec2::ZERO,
         };
@@ -224,9 +245,14 @@ fn update_detected_ships(
         Option<&Detected>,
         Option<&NoLongerDetected>,
     )>,
+    clients: Query<&ClientInfo>,
+    shared_entities: Res<SharedEntityTracking>,
+    msgs_tx: Res<MessagesSend>,
 ) {
     for ship in &ships {
-        let mut entity = commands.entity(ship.0);
+        let mut new_detection = None;
+
+        // let mut entity = commands.entity(ship.0);
         let detection_last_frame = DetectionStatus::from_options(ship.4, ship.5);
         let is_detected = ships.iter().any(|other_ship| {
             other_ship.2 != ship.2
@@ -235,19 +261,60 @@ fn update_detected_ships(
                     .translation
                     .truncate()
                     .distance(ship.3.translation.truncate())
-                    <= ship.1.detection
+                    <= ship.1.template.detection
         });
         if is_detected {
-            entity.insert(Detected);
-            if detection_last_frame.is_no_longer() {
-                entity.remove::<NoLongerDetected>();
-            }
+            // entity.insert(Detected);
+            // if detection_last_frame.is_no_longer() {
+            //     entity.remove::<NoLongerDetected>();
+            // }
+            new_detection = Some((Some(Detected), None));
         }
         if !is_detected && detection_last_frame.is_detected() {
-            entity.insert(NoLongerDetected {
-                last_known: *ship.3,
-            });
-            entity.remove::<Detected>();
+            // entity.insert(NoLongerDetected {
+            //     last_known: *ship.3,
+            // });
+            // entity.remove::<Detected>();
+            new_detection = Some((
+                None,
+                Some(NoLongerDetected {
+                    last_known: *ship.3,
+                }),
+            ));
+        }
+
+        if let Some((detected, no_longer_detected)) = new_detection {
+            for cl in clients {
+                if let Some(id) = shared_entities.get_by_local(ship.0) {
+                    msgs_tx.send(WrtsMatchMessage {
+                        client: cl.info.id,
+                        msg: Message::Match2Client(Match2Client::SetDetection {
+                            id,
+                            currently_detected: detected.is_some(),
+                            last_known_pos: no_longer_detected.map(|n| {
+                                (n.last_known.translation.truncate(), n.last_known.rotation)
+                            }),
+                        }),
+                    });
+                }
+            }
+            let mut entity = commands.entity(ship.0);
+            match detected {
+                Some(d) => {
+                    entity.insert(d);
+                }
+                None => {
+                    entity.try_remove::<Detected>();
+                }
+            }
+            match no_longer_detected {
+                Some(n) => {
+                    entity.insert(n);
+                }
+                None => {
+                    entity.try_remove::<NoLongerDetected>();
+                }
+            }
         }
     }
 }
@@ -283,7 +350,7 @@ fn fire_bullets(
         .into_iter()
         .flat_map(|team| (0..ships_by_team[team].len()).map(move |idx| (team, idx)))
         .flat_map(|(team, ship_idx)| {
-            (0..ships_by_team[team][ship_idx].2.turrets.len())
+            (0..ships_by_team[team][ship_idx].2.template.turrets.len())
                 .map(move |turret_idx| (team, ship_idx, turret_idx))
         })
         .collect_vec()
@@ -298,9 +365,11 @@ fn fire_bullets(
             });
 
             let Some((_, _, _, targ_trans, targ_vel, _)) = targ else {
-                let turret = &mut ships_by_team[team_opposite][ship_idx].2.turrets[turret_idx];
-                if !turret.reload_timer.finished() {
-                    turret.reload_timer.tick(time.delta());
+                let turret_timer = &mut ships_by_team[team_opposite][ship_idx]
+                    .2
+                    .turret_reload_timers[turret_idx];
+                if !turret_timer.finished() {
+                    turret_timer.tick(time.delta());
                 }
                 continue;
             };
@@ -311,11 +380,12 @@ fn fire_bullets(
 
         let (ship_entity, _ship_team, ship, ship_trans, _ship_vel, _ship_targ) =
             &mut ships_by_team[team_opposite][ship_idx];
-        let turret = &mut ship.turrets[turret_idx];
+        let turret_template = &ship.template.turrets[turret_idx];
+        let turret_reload_timer = &mut ship.turret_reload_timers[turret_idx];
 
         let origin_pos = ship_trans.translation.truncate()
             + Vec2::from_angle(ship_trans.rotation.to_euler(EulerRot::ZXY).0)
-                .rotate(turret.location_on_ship);
+                .rotate(turret_template.location_on_ship);
         let targ_pos = targ_trans.translation.truncate();
 
         let Some(BulletProblemRes {
@@ -329,26 +399,26 @@ fn fire_bullets(
             origin_pos,
             targ_pos,
             targ_vel.0.truncate(),
-            turret.muzzle_vel as f64,
+            turret_template.muzzle_vel as f64,
             rules.gravity as f64,
         )
         else {
-            if !turret.reload_timer.finished() {
-                turret.reload_timer.tick(time.delta());
+            if !turret_reload_timer.finished() {
+                turret_reload_timer.tick(time.delta());
             }
             continue;
         };
-        if intersection_dist >= turret.max_range {
-            if !turret.reload_timer.finished() {
-                turret.reload_timer.tick(time.delta());
+        if intersection_dist >= turret_template.max_range {
+            if !turret_reload_timer.finished() {
+                turret_reload_timer.tick(time.delta());
             }
             continue;
         }
 
-        for _ in 0..turret.reload_timer.times_finished_this_tick() {
-            for barrel in &turret.barrels {
-                let bullet_vel =
-                    turret.dispersion.apply_dispersion(bullet_dir) * turret.muzzle_vel as f32;
+        for _ in 0..turret_reload_timer.times_finished_this_tick() {
+            for barrel in &turret_template.barrels {
+                let bullet_vel = apply_dispersion(&turret_template.dispersion, bullet_dir)
+                    * turret_template.muzzle_vel as f32;
 
                 let bullet_start = origin_pos + Vec2::from_angle(bullet_azimuth).rotate(*barrel);
                 let bullet_trans = Transform {
@@ -365,7 +435,7 @@ fn fire_bullets(
                     *ship_entity,
                     bullet_trans,
                     bullet_vel,
-                    turret.damage,
+                    turret_template.damage,
                 );
             }
         }
@@ -374,7 +444,7 @@ fn fire_bullets(
         // reload when unable to fire, including when there is no target
         // If we consider the previous checks that the target is shootable,
         // placing the tick here accounts for the above
-        turret.reload_timer.tick(time.delta());
+        turret_reload_timer.tick(time.delta());
     }
 }
 
@@ -386,16 +456,7 @@ fn make_bullet(
     vel: Vec3,
     damage: f64,
 ) {
-    todo!("Networking");
-    commands.spawn((
-        Bullet {
-            owning_ship,
-            damage,
-        },
-        trans,
-        Velocity(vel),
-        team,
-    ));
+    unimplemented!("Use `spawn_entity` module");
 }
 
 fn apply_velocity(q: Query<(&mut Transform, &Velocity)>, time: Res<Time>) {
@@ -406,6 +467,7 @@ fn apply_velocity(q: Query<(&mut Transform, &Velocity)>, time: Res<Time>) {
 
 fn main() -> Result<()> {
     let exit = App::new()
+        .init_resource::<GameRules>()
         .add_plugins(
             DefaultPlugins
                 .set(ImagePlugin::default_nearest())

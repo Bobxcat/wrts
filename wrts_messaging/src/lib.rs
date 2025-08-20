@@ -1,20 +1,28 @@
 use std::{
     fmt::Display,
-    io::{self, Read, Write},
+    io::{self},
     pin::Pin,
     task::Poll,
 };
 
 use anyhow::{Result, anyhow};
+use glam::{Quat, Vec2};
 use pin_project::pin_project;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use wrts_match_shared::ship_template::ShipTemplateId;
 use wtransport::{RecvStream, SendStream};
 
 pub const DEFAULT_PORT: u16 = 4433;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SharedEntityId(pub u64);
+
+impl std::fmt::Debug for SharedEntityId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // f.debug_tuple("SharedEntityId").field(&self.0).finish()
+        write!(f, "shared{:x}", self.0)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ClientId(pub u32);
@@ -38,8 +46,14 @@ pub struct ClientSharedInfo {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Client2Match {
-    InitB { info: ClientSharedInfo },
+    InitB {
+        info: ClientSharedInfo,
+    },
     Echo(String),
+    SetMoveOrder {
+        id: SharedEntityId,
+        waypoints: Vec<Vec2>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,10 +67,25 @@ pub enum Match2Client {
     PrintMsg(String),
     DestroyEntity(SharedEntityId),
     SpawnShip {
-        //
+        id: SharedEntityId,
+        team: ClientId,
+        ship_base: ShipTemplateId,
+        health: f64,
+        pos: Vec2,
+        rot: Quat,
     },
-    UpdateShipInfo {
-        //
+    SetEntityPos {
+        id: SharedEntityId,
+        pos: Vec2,
+    },
+    SetMoveOrder {
+        id: SharedEntityId,
+        waypoints: Vec<Vec2>,
+    },
+    SetDetection {
+        id: SharedEntityId,
+        currently_detected: bool,
+        last_known_pos: Option<(Vec2, Quat)>,
     },
 }
 
