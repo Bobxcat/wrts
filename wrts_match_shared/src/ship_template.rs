@@ -14,6 +14,11 @@ pub struct ShipTemplate {
     pub turrets: Vec<Turret>,
 }
 
+/// A unique numerical identifier for each ship template,
+/// used for temporary serialization/deserialization.
+/// Note that `ShipTemplateId`s can change between versions
+///
+/// For storage, use [ShipTemplateId::to_name] and [ShipTemplateId::from_name]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ShipTemplateId(u32);
 

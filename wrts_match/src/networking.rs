@@ -10,7 +10,8 @@ use wrts_messaging::{
 };
 
 pub use crate::networking::shared_entity_tracking::SharedEntityTracking;
-use crate::{MoveOrder, Team};
+use crate::ship::Ship;
+use crate::{FireTarget, MoveOrder, Team};
 
 pub struct NetworkingPlugin;
 
@@ -166,7 +167,7 @@ pub struct ClientInfo {
 
 fn network_handshake(world: &mut World) {
     info!(
-        "`WrtsMatchMessage` in-memory size: {}b",
+        "`WrtsMatchMessage` in-memory size: {}B",
         std::mem::size_of::<WrtsMatchMessage>()
     );
     let init_msg = WrtsMatchInitMessage::recv_sync(&mut stdin()).unwrap();
@@ -232,6 +233,7 @@ fn read_messages(
     shared_entities: Res<SharedEntityTracking>,
     mut exit: EventWriter<AppExit>,
 
+    ships: Query<&Ship>,
     teams: Query<&Team>,
 ) {
     loop {
@@ -271,6 +273,43 @@ fn read_messages(
                     continue;
                 }
                 commands.entity(local).insert(MoveOrder { waypoints });
+            }
+            Message::Client2Match(Client2Match::SetFireTarg { id, targ }) => {
+                let Some(local) = shared_entities.get_by_shared(id) else {
+                    warn!("Client {msg_sender} sent message with bad id: {id:?}");
+                    continue;
+                };
+                if teams
+                    .get(local)
+                    .ok()
+                    .and_then(|team| (team.0 == msg_sender).then_some(()))
+                    .is_none()
+                {
+                    warn!(
+                        "Client {msg_sender} tried to SetMoveOrder on an entity not owned by them"
+                    );
+                    continue;
+                }
+                match targ {
+                    Some(targ) => {
+                        let Some(targ_local) = shared_entities.get_by_shared(targ) else {
+                            warn!("Client {msg_sender} sent message with bad id: {targ:?}");
+                            continue;
+                        };
+                        if ships.contains(targ_local) {
+                            commands
+                                .entity(local)
+                                .insert(FireTarget { ship: targ_local });
+                        } else {
+                            warn!(
+                                "Client {msg_sender} tried to SetFireTarg at a bad target: {targ:?}"
+                            );
+                        }
+                    }
+                    None => {
+                        commands.entity(local).try_remove::<FireTarget>();
+                    }
+                }
             }
             Message::Client2Match(Client2Match::InitB { .. })
             | Message::Match2Client(_)

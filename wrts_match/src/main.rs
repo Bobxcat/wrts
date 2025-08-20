@@ -13,6 +13,7 @@ use crate::{
     math_utils::BulletProblemRes,
     networking::{ClientInfo, MessagesSend, NetworkingPlugin, SharedEntityTracking},
     ship::{Ship, apply_dispersion},
+    spawn_entity::SpawnBulletCommand,
 };
 
 mod initialize_game;
@@ -223,6 +224,10 @@ impl DetectionStatus {
             _ => false,
         }
     }
+
+    pub fn is_eq_variant(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
 }
 
 /// Currently detected
@@ -252,7 +257,6 @@ fn update_detected_ships(
     for ship in &ships {
         let mut new_detection = None;
 
-        // let mut entity = commands.entity(ship.0);
         let detection_last_frame = DetectionStatus::from_options(ship.4, ship.5);
         let is_detected = ships.iter().any(|other_ship| {
             other_ship.2 != ship.2
@@ -264,17 +268,9 @@ fn update_detected_ships(
                     <= ship.1.template.detection
         });
         if is_detected {
-            // entity.insert(Detected);
-            // if detection_last_frame.is_no_longer() {
-            //     entity.remove::<NoLongerDetected>();
-            // }
             new_detection = Some((Some(Detected), None));
         }
         if !is_detected && detection_last_frame.is_detected() {
-            // entity.insert(NoLongerDetected {
-            //     last_known: *ship.3,
-            // });
-            // entity.remove::<Detected>();
             new_detection = Some((
                 None,
                 Some(NoLongerDetected {
@@ -283,7 +279,10 @@ fn update_detected_ships(
             ));
         }
 
-        if let Some((detected, no_longer_detected)) = new_detection {
+        if let Some((detected, no_longer_detected)) = new_detection
+            && !DetectionStatus::from_options(detected.as_ref(), no_longer_detected.as_ref())
+                .is_eq_variant(&detection_last_frame)
+        {
             for cl in clients {
                 if let Some(id) = shared_entities.get_by_local(ship.0) {
                     msgs_tx.send(WrtsMatchMessage {
@@ -339,10 +338,9 @@ fn fire_bullets(
         .collect_array()
         .unwrap();
     let mut ships_by_team: TeamMap<_> = {
-        let (team0, team1) = ships.into_iter().partition::<Vec<_>, _>(|(_, team, ..)| {
-            assert!(teams.contains(team));
-            **team == teams[0]
-        });
+        let (team0, team1) = ships
+            .into_iter()
+            .partition::<Vec<_>, _>(|(_, team, ..)| **team == teams[0]);
         TeamMap::from_iter([(teams[0], team0), (teams[1], team1)])
     };
 
@@ -391,7 +389,7 @@ fn fire_bullets(
         let Some(BulletProblemRes {
             intersection_point: _,
             intersection_time: _,
-            intersection_dist,
+            intersection_dist: _,
             projectile_dir: bullet_dir,
             projectile_azimuth: bullet_azimuth,
             projectile_elevation: _,
@@ -402,18 +400,13 @@ fn fire_bullets(
             turret_template.muzzle_vel as f64,
             rules.gravity as f64,
         )
+        .filter(|bp| bp.intersection_dist < turret_template.max_range)
         else {
             if !turret_reload_timer.finished() {
                 turret_reload_timer.tick(time.delta());
             }
             continue;
         };
-        if intersection_dist >= turret_template.max_range {
-            if !turret_reload_timer.finished() {
-                turret_reload_timer.tick(time.delta());
-            }
-            continue;
-        }
 
         for _ in 0..turret_reload_timer.times_finished_this_tick() {
             for barrel in &turret_template.barrels {
@@ -429,14 +422,14 @@ fn fire_bullets(
                     ..default()
                 };
 
-                make_bullet(
-                    commands.reborrow(),
+                commands.queue(SpawnBulletCommand {
                     team,
-                    *ship_entity,
-                    bullet_trans,
-                    bullet_vel,
-                    turret_template.damage,
-                );
+                    owning_ship: *ship_entity,
+                    damage: turret_template.damage,
+                    pos: bullet_trans.translation,
+                    rot: bullet_trans.rotation,
+                    vel: bullet_vel,
+                });
             }
         }
 
@@ -446,17 +439,6 @@ fn fire_bullets(
         // placing the tick here accounts for the above
         turret_reload_timer.tick(time.delta());
     }
-}
-
-fn make_bullet(
-    mut commands: Commands,
-    team: Team,
-    owning_ship: Entity,
-    trans: Transform,
-    vel: Vec3,
-    damage: f64,
-) {
-    unimplemented!("Use `spawn_entity` module");
 }
 
 fn apply_velocity(q: Query<(&mut Transform, &Velocity)>, time: Res<Time>) {

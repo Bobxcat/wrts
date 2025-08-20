@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use glam::{Quat, Vec2};
+use glam::{Quat, Vec2, Vec3};
 use pin_project::pin_project;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use wrts_match_shared::ship_template::ShipTemplateId;
@@ -54,6 +54,10 @@ pub enum Client2Match {
         id: SharedEntityId,
         waypoints: Vec<Vec2>,
     },
+    SetFireTarg {
+        id: SharedEntityId,
+        targ: Option<SharedEntityId>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -72,6 +76,14 @@ pub enum Match2Client {
         ship_base: ShipTemplateId,
         health: f64,
         pos: Vec2,
+        rot: Quat,
+    },
+    SpawnBullet {
+        id: SharedEntityId,
+        team: ClientId,
+        owning_ship: SharedEntityId,
+        damage: f64,
+        pos: Vec3,
         rot: Quat,
     },
     SetEntityPos {

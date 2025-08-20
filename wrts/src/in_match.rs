@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use wrts_messaging::{Client2Match, ClientSharedInfo, Match2Client, Message, SharedEntityId};
 
 use crate::{
-    AppState, Detected, Health, MoveOrder, NoLongerDetected, PlayerSettings, Team,
+    AppState, Bullet, Detected, Health, MoveOrder, NoLongerDetected, PlayerSettings, Team,
     networking::{ClientInfo, ServerConnection, ThisClient},
     ship::Ship,
 };
@@ -156,7 +156,7 @@ fn in_match_networking(
     mut shared_entities: ResMut<SharedEntityTracking>,
     mut transforms: Query<&mut Transform>,
 ) -> Option<()> {
-    for msg in server.recv_all()? {
+    while let Ok(msg) = server.recv_next() {
         match msg {
             Message::Match2Client(Match2Client::PrintMsg(s)) => {
                 info!("PrintMsg called: {s}");
@@ -185,6 +185,31 @@ fn in_match_networking(
                         Health(health),
                         Transform {
                             translation: pos.extend(0.),
+                            rotation: rot,
+                            ..default()
+                        },
+                    ))
+                    .id();
+                shared_entities.insert(id, local);
+            }
+            Message::Match2Client(Match2Client::SpawnBullet {
+                id,
+                team,
+                owning_ship,
+                damage,
+                pos,
+                rot,
+            }) => {
+                let local = commands
+                    .spawn((
+                        StateScoped(AppState::InMatch),
+                        Bullet {
+                            owning_ship: shared_entities[owning_ship],
+                            damage,
+                        },
+                        Team(team),
+                        Transform {
+                            translation: pos,
                             rotation: rot,
                             ..default()
                         },
@@ -242,6 +267,11 @@ fn in_match_networking(
             }
         }
     }
+
+    if server.disconnected() {
+        return None;
+    }
+
     Some(())
 }
 

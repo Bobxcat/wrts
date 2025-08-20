@@ -62,28 +62,6 @@ impl ServerConnection {
         res
     }
 
-    /// Receive all messages currently pending from the server,
-    /// in the order that they were sent
-    ///
-    /// `None` means the server is disconnected
-    #[must_use]
-    pub fn recv_all(&mut self) -> Option<Vec<Message>> {
-        if self.disconnected() {
-            return None;
-        }
-        let mut msgs = vec![];
-        loop {
-            match self.rx.try_recv() {
-                Ok(msg) => msgs.push(msg),
-                Err(mpsc::error::TryRecvError::Empty) => return Some(msgs),
-                Err(mpsc::error::TryRecvError::Disconnected) => {
-                    self.disconnection_triggered = true;
-                    return None;
-                }
-            }
-        }
-    }
-
     #[must_use]
     pub fn recv_next(&mut self) -> Result<Message, RecvNextErr> {
         if self.disconnected() {

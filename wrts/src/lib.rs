@@ -103,10 +103,6 @@ fn update_cursor_world_pos(
     }
 }
 
-#[derive(Debug, Default, Component, Clone, Copy)]
-#[require(Transform)]
-struct Velocity(pub Vec3);
-
 #[derive(Debug, Default, Component, Clone)]
 struct MoveOrder {
     pub waypoints: Vec<Vec2>,
@@ -261,7 +257,7 @@ fn update_ship_ghosts_display(
 }
 
 #[derive(Debug, Component, Clone)]
-#[require(Team, Sprite, Transform, Velocity)]
+#[require(Team, Sprite, Transform)]
 struct Bullet {
     owning_ship: Entity,
     damage: f64,
@@ -271,19 +267,21 @@ fn update_bullet_displays(
     bullets: Query<(&Transform, &mut Sprite, &Team), With<Bullet>>,
     settings: Res<PlayerSettings>,
     zoom: Res<MapZoom>,
+    this_client: Res<ThisClient>,
 ) {
-    for (trans, mut sprite, &_team) in bullets {
+    for (trans, mut sprite, &team) in bullets {
         if trans.translation.z <= 0. {
             *sprite = Sprite::from_color(
                 Color::linear_rgb(0., 0., 0.),
                 sprite.custom_size.unwrap_or_default(),
             );
+        } else {
+            sprite.color = settings.team_colors(team, *this_client).ship_color;
+            let double_height = 1000.;
+            let height_scaling = 1. + trans.translation.z / double_height;
+            sprite.custom_size =
+                Some(vec2(0.5, 2.) * height_scaling * settings.bullet_icon_scale * zoom.0);
         }
-
-        let double_height = 1000.;
-        let height_scaling = 1. + trans.translation.z / double_height;
-        sprite.custom_size =
-            Some(vec2(0.5, 2.) * height_scaling * settings.bullet_icon_scale * zoom.0);
     }
 }
 
@@ -459,6 +457,7 @@ fn update_selected_ship_orders(
     // Orders
     for ship in &mut ships_selected {
         let mut new_move_order = None;
+        let mut new_fire_target = None;
 
         if mouse.just_pressed(MouseButton::Left)
             && only_modifier_keys_pressed(&keyboard, [KeyCode::ControlLeft])
@@ -468,15 +467,13 @@ fn update_selected_ship_orders(
                     && maybe_targ.1.translation.truncate().distance(mouse_pos.0)
                         <= SHIP_SELECTION_SIZE * zoom.0
             }) {
-                commands
-                    .entity(ship.0)
-                    .insert(FireTarget { ship: new_targ.0 });
+                new_fire_target = Some(Some(FireTarget { ship: new_targ.0 }));
             }
         }
         if keyboard.just_pressed(KeyCode::KeyQ)
             && only_modifier_keys_pressed(&keyboard, [KeyCode::ControlLeft])
         {
-            commands.entity(ship.0).remove::<FireTarget>();
+            new_fire_target = Some(None);
         }
 
         if mouse.just_pressed(MouseButton::Left)
@@ -501,15 +498,30 @@ fn update_selected_ship_orders(
         if keyboard.just_pressed(KeyCode::KeyQ)
             && only_modifier_keys_pressed(&keyboard, [KeyCode::AltLeft])
         {
-            new_move_order = None;
+            new_move_order = Some(MoveOrder { waypoints: vec![] });
         }
 
         if let Some(move_order) = new_move_order {
-            server.send(Message::Client2Match(Client2Match::SetMoveOrder {
+            let _ = server.send(Message::Client2Match(Client2Match::SetMoveOrder {
                 id: shared_entities[ship.0],
                 waypoints: move_order.waypoints.clone(),
             }));
             commands.entity(ship.0).insert(move_order);
+        }
+
+        if let Some(fire_target) = new_fire_target {
+            let _ = server.send(Message::Client2Match(Client2Match::SetFireTarg {
+                id: shared_entities[ship.0],
+                targ: fire_target.clone().map(|targ| shared_entities[targ.ship]),
+            }));
+            match fire_target {
+                Some(fire_target) => {
+                    commands.entity(ship.0).insert(fire_target);
+                }
+                None => {
+                    commands.entity(ship.0).remove::<FireTarget>();
+                }
+            }
         }
     }
 }
