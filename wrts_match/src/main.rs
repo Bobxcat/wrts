@@ -145,20 +145,48 @@ fn update_ship_velocity(
 }
 
 #[derive(Debug, Component, Clone)]
-#[require(Team, Sprite, Transform, Velocity)]
+#[require(Team, Sprite, Transform)]
 struct Bullet {
     owning_ship: Entity,
+    targ_ship: Entity,
+    inital_pos: Vec3,
+    inital_vel: Vec3,
+    inital_aimpoint: Vec2,
+    current_aimpoint: Vec2,
+    expected_flight_time_total: Duration,
+    current_flight_time: Duration,
     damage: f64,
 }
 
 fn move_bullets(
     mut commands: Commands,
-    q: Query<(Entity, &Bullet, &Transform, &mut Velocity)>,
+    q: Query<(Entity, &mut Bullet, &mut Transform)>,
+    targets: Query<(&Transform, &Velocity), Without<Bullet>>,
     rules: Res<GameRules>,
     time: Res<Time>,
 ) {
-    for (entity, _bullet, trans, mut bullet_vel) in q {
-        bullet_vel.0.z -= rules.gravity * time.delta_secs();
+    for (entity, mut bullet, mut trans) in q {
+        if let Ok((targ_trans, targ_vel)) = targets.get(bullet.targ_ship) {
+            let rem_time = bullet
+                .expected_flight_time_total
+                .saturating_sub(bullet.current_flight_time)
+                .as_secs_f32();
+            bullet.current_aimpoint =
+                targ_trans.translation.truncate() + targ_vel.0.truncate() * rem_time;
+        };
+        let aimpoint_adjustment = bullet.current_aimpoint - bullet.inital_aimpoint;
+        // Use an explicit solution for position as a function of time,
+        // with P(0) = (bullet inital position) + (aimpoint adjustment)
+        // This has the nice benefit of being perfectly accurate
+        trans.translation = vec3(
+            0.,
+            0.,
+            -0.5 * rules.gravity * bullet.current_flight_time.as_secs_f32().powi(2),
+        ) + bullet.inital_vel * bullet.current_flight_time.as_secs_f32()
+            + bullet.inital_pos
+            + aimpoint_adjustment.extend(0.);
+        bullet.current_flight_time += time.delta();
+
         if trans.translation.z <= -100. {
             commands.queue(DespawnNetworkedEntityCommand { entity });
         }
@@ -235,7 +263,7 @@ fn fire_bullets(
     {
         let team_opposite = if teams[0] == team { teams[1] } else { teams[0] };
 
-        let (targ_trans, targ_vel) = {
+        let (targ, targ_trans, targ_vel) = {
             let targ = ships_by_team[team][ship_idx]
                 .5
                 .and_then(|targ| {
@@ -245,7 +273,7 @@ fn fire_bullets(
                 })
                 .filter(|(_, _, _, _, _, _, targ_detection)| targ_detection.is_detected);
 
-            let Some((_, _, _, targ_trans, targ_vel, _, _)) = targ else {
+            let Some((targ, _, _, targ_trans, targ_vel, _, _)) = targ else {
                 let turret_timer =
                     &mut ships_by_team[team][ship_idx].2.turret_reload_timers[turret_idx];
                 if !turret_timer.finished() {
@@ -253,10 +281,8 @@ fn fire_bullets(
                 }
                 continue;
             };
-            (targ_trans, targ_vel)
+            (*targ, **targ_trans, **targ_vel)
         };
-        let targ_trans = **targ_trans;
-        let targ_vel = **targ_vel;
 
         let (ship_entity, _, ship, ship_trans, _, _ship_targ, _) =
             &mut ships_by_team[team][ship_idx];
@@ -269,8 +295,8 @@ fn fire_bullets(
         let targ_pos = targ_trans.translation.truncate();
 
         let Some(BulletProblemRes {
-            intersection_point: _,
-            intersection_time: _,
+            intersection_point,
+            intersection_time,
             intersection_dist: _,
             projectile_dir: bullet_dir,
             projectile_azimuth: bullet_azimuth,
@@ -296,22 +322,34 @@ fn fire_bullets(
                     * turret_template.muzzle_vel as f32;
 
                 let bullet_start = origin_pos + Vec2::from_angle(bullet_azimuth).rotate(*barrel);
+                let bullet_start = bullet_start.extend(5.);
                 let bullet_trans = Transform {
-                    translation: bullet_start.extend(5.),
+                    translation: bullet_start,
                     rotation: Quat::from_rotation_z(
                         std::f32::consts::FRAC_PI_2 + bullet_vel.truncate().to_angle(),
                     ),
                     ..default()
                 };
 
+                let bullet = Bullet {
+                    owning_ship: *ship_entity,
+                    targ_ship: targ,
+                    inital_pos: bullet_start,
+                    inital_vel: bullet_vel,
+                    inital_aimpoint: intersection_point,
+                    current_aimpoint: intersection_point,
+                    expected_flight_time_total: Duration::from_secs_f32(intersection_time),
+                    current_flight_time: Duration::ZERO,
+                    damage: turret_template.damage,
+                };
+
                 commands.queue(SpawnBulletCommand {
                     team,
-                    owning_ship: *ship_entity,
+                    bullet,
                     update_firing_detection_timer: Some(Duration::from_secs(20)),
-                    damage: turret_template.damage,
                     pos: bullet_trans.translation,
                     rot: bullet_trans.rotation,
-                    vel: bullet_vel,
+                    // vel: bullet_vel,
                 });
             }
         }

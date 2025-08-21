@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use itertools::Itertools;
 use std::io::stdin;
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::{collections::HashMap, io::Write, ops::Deref};
@@ -9,6 +10,7 @@ use wrts_messaging::{
     write_to_stream_sync,
 };
 
+use crate::detection::DetectionStatus;
 pub use crate::networking::shared_entity_tracking::SharedEntityTracking;
 use crate::ship::Ship;
 use crate::{FireTarget, MoveOrder, Team};
@@ -322,18 +324,27 @@ fn read_messages(
 }
 
 fn send_transform_updates(
-    transforms: Query<(Entity, &Transform), Changed<Transform>>,
+    transforms: Query<(Entity, &Transform, Option<(&DetectionStatus, &Team)>), Changed<Transform>>,
     clients: Query<&ClientInfo>,
     msgs_tx: Res<MessagesSend>,
     shared_entities: Res<SharedEntityTracking>,
 ) {
-    for (local, trans) in transforms {
+    let clients = clients.iter().map(|cl| cl.info.id).collect_vec();
+    for (local, trans, detection) in transforms {
+        let clients_to_update: Vec<ClientId>;
+        if let Some((detection, team)) = detection
+            && !detection.is_detected
+        {
+            clients_to_update = vec![team.0];
+        } else {
+            clients_to_update = clients.clone();
+        }
         let Some(shared) = shared_entities.get_by_local(local) else {
             continue;
         };
-        for cl in clients {
+        for cl in clients_to_update {
             msgs_tx.send(WrtsMatchMessage {
-                client: cl.info.id,
+                client: cl,
                 msg: Message::Match2Client(Match2Client::SetEntityPos {
                     id: shared,
                     pos: trans.translation,

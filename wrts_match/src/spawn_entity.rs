@@ -100,12 +100,10 @@ impl Command for SpawnShipCommand {
 
 pub struct SpawnBulletCommand {
     pub team: Team,
-    pub owning_ship: Entity,
+    pub bullet: Bullet,
     pub update_firing_detection_timer: Option<Duration>,
-    pub damage: f64,
     pub pos: Vec3,
     pub rot: Quat,
-    pub vel: Vec3,
 }
 
 impl Command for SpawnBulletCommand {
@@ -113,23 +111,21 @@ impl Command for SpawnBulletCommand {
         let entity = {
             world
                 .spawn((
-                    Bullet {
-                        owning_ship: self.owning_ship,
-                        damage: self.damage,
-                    },
+                    self.bullet.clone(),
                     self.team,
                     Transform {
                         translation: self.pos,
                         rotation: self.rot,
                         ..default()
                     },
-                    Velocity(self.vel),
                 ))
                 .id()
         };
 
         if let Some(t) = self.update_firing_detection_timer {
-            let mut det = world.get_mut::<DetectionStatus>(self.owning_ship).unwrap();
+            let mut det = world
+                .get_mut::<DetectionStatus>(self.bullet.owning_ship)
+                .unwrap();
             det.detection_increased_by_firing = Timer::new(
                 t.max(det.detection_increased_by_firing.remaining()),
                 TimerMode::Once,
@@ -143,7 +139,7 @@ impl Command for SpawnBulletCommand {
 
         let owning_ship = world
             .resource::<SharedEntityTracking>()
-            .get_by_local(self.owning_ship)
+            .get_by_local(self.bullet.owning_ship)
             .unwrap();
         for cl in clients.iter(world) {
             msgs_tx.send(WrtsMatchMessage {
@@ -152,7 +148,7 @@ impl Command for SpawnBulletCommand {
                     id: shared_id,
                     team: self.team.0,
                     owning_ship,
-                    damage: self.damage,
+                    damage: self.bullet.damage,
                     pos: self.pos,
                     rot: self.rot,
                 }),
