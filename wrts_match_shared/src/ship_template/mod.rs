@@ -1,3 +1,7 @@
+mod germany;
+mod russia;
+mod sweden;
+
 use glam::{Vec2, vec2};
 use paste::paste;
 use serde::{Deserialize, Serialize};
@@ -8,6 +12,7 @@ const SHIP_SPEED_SCALE: f32 = 5.2;
 #[derive(Debug)]
 pub struct ShipTemplate {
     pub id: ShipTemplateId,
+    pub ship_class: ShipClass,
     pub max_speed: f32,
     pub max_health: f64,
     pub detection: f32,
@@ -95,64 +100,14 @@ impl ShipTemplate {
     pub fn from_id(id: ShipTemplateId) -> &'static Self {
         id.to_template()
     }
+}
 
-    fn oland() -> ShipTemplate {
-        let main_battery_prefab = Turret {
-            reload_secs: 4.,
-            damage: 10.,
-            muzzle_vel: 850.,
-            max_range: 10100.,
-            dispersion: Dispersion {
-                vertical: 3.5,
-                horizontal: 9.,
-                sigma: 2.0,
-            },
-            barrels: vec![vec2(1., 0.2), vec2(1., -0.2)],
-            location_on_ship: Vec2::ZERO,
-        };
-        ShipTemplate {
-            id: ShipTemplateId::oland(),
-            max_speed: 35. * SHIP_SPEED_SCALE,
-            max_health: 20_000.,
-            detection: 7200.,
-            turrets: vec![
-                main_battery_prefab.clone().with_location(vec2(5., 0.)),
-                main_battery_prefab.clone().with_location(vec2(-5., 0.)),
-            ],
-        }
-    }
-
-    fn bismarck() -> ShipTemplate {
-        let main_battery_prefab = Turret {
-            reload_secs: 26.,
-            damage: 100.,
-            muzzle_vel: 820.,
-            max_range: 21200.,
-            dispersion: Dispersion {
-                vertical: 6.,
-                horizontal: 12.83,
-                sigma: 1.8,
-            },
-            barrels: vec![vec2(2., 0.4), vec2(2., -0.4)],
-            location_on_ship: Vec2::ZERO,
-        };
-        ShipTemplate {
-            id: ShipTemplateId::bismarck(),
-            max_speed: 31. * SHIP_SPEED_SCALE,
-            max_health: 60_000.,
-            detection: 15900.,
-            turrets: vec![
-                main_battery_prefab.clone().with_location(vec2(30., 0.)),
-                main_battery_prefab.clone().with_location(vec2(20., 0.)),
-                main_battery_prefab.clone().with_location(vec2(-20., 0.)),
-                main_battery_prefab.clone().with_location(vec2(-30., 0.)),
-            ],
-        }
-    }
-
-    fn kiev() -> ShipTemplate {
-        todo!()
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShipClass {
+    Battleship,
+    CruiserHeavy,
+    CruiserLight,
+    Destroyer,
 }
 
 #[derive(Debug, Clone, Copy)]
