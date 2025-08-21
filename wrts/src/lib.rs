@@ -110,78 +110,38 @@ struct MoveOrder {
 
 // struct RudderPos
 
-#[derive(Debug, Component, Clone)]
+#[derive(Component, Debug, Clone)]
 struct FireTarget {
     ship: Entity,
 }
 
-#[derive(Debug, Component, Default, Clone)]
+#[derive(Component, Debug, Default, Clone)]
 struct Health(pub f64);
 
-#[derive(Debug, Default, Component, Clone, Copy)]
+#[derive(Component, Debug, Default, Clone, Copy)]
 struct Selected;
 
-/// NOT A COMPONENT
-#[derive(Debug, Clone, Copy)]
-pub enum DetectionStatus {
-    Detected,
-    NoLonger(NoLongerDetected),
-    Never,
-}
-
-impl DetectionStatus {
-    pub fn from_options(detected: Option<&Detected>, no_longer: Option<&NoLongerDetected>) -> Self {
-        match (detected, no_longer) {
-            (Some(_), None) => Self::Detected,
-            (_, Some(n)) => Self::NoLonger(*n),
-            (None, None) => Self::Never,
-        }
-    }
-
-    pub fn is_detected(&self) -> bool {
-        match self {
-            Self::Detected => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_no_longer(&self) -> bool {
-        match self {
-            Self::NoLonger(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_never(&self) -> bool {
-        match self {
-            Self::Never => true,
-            _ => false,
-        }
-    }
-}
-
 /// Currently detected
-#[derive(Debug, Default, Component, Clone, Copy)]
-pub struct Detected;
-
-/// Has been detected before, but isn't currently
-#[derive(Debug, Default, Component, Clone, Copy)]
-pub struct NoLongerDetected {
-    pub last_known: Transform,
+#[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum DetectionStatus {
+    #[default]
+    Never,
+    Detected,
+    UnDetected,
 }
 
 /// The ghost of a once-detected ship
-#[derive(Debug, Component, Clone, Copy)]
+#[derive(Component, Debug, Clone, Copy)]
 #[require(Health, Transform, Sprite)]
 pub struct ShipGhost {
     pub owner: Entity,
 }
 
-#[derive(Debug, Default, Resource, Clone, Copy)]
+#[derive(Resource, Debug, Default, Clone, Copy)]
 struct MapZoom(pub f32);
 
 /// Component representing "ownership" by a client
-#[derive(Debug, Component, Clone, Copy, PartialEq, Eq)]
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 struct Team(pub ClientId);
 
 impl Default for Team {
@@ -200,43 +160,45 @@ impl Team {
 
 fn update_ship_ghosts(
     mut commands: Commands,
-    ships: Query<(Entity, Option<&Detected>, Option<&NoLongerDetected>, &Team), With<Ship>>,
+    changed_ships: Query<
+        (Entity, &Team, &Transform, &DetectionStatus),
+        (With<Ship>, Changed<DetectionStatus>),
+    >,
+    all_ships: Query<(), With<Ship>>,
     this_client: Res<ThisClient>,
     mut current_ghosts: Local<HashMap<Entity, Entity>>,
 ) {
-    for ship in ships {
-        if ship.3.is_this_client(*this_client) {
+    for (ship, ship_team, ship_trans, ship_detection) in changed_ships {
+        if ship_team.is_this_client(*this_client) {
             continue;
         }
-        let detection_status = DetectionStatus::from_options(ship.1, ship.2);
-        match detection_status {
-            DetectionStatus::NoLonger(no_longer_detected)
-                if !current_ghosts.contains_key(&ship.0) =>
-            {
+        match ship_detection {
+            DetectionStatus::UnDetected if !current_ghosts.contains_key(&ship) => {
                 current_ghosts.insert(
-                    ship.0,
+                    ship,
                     commands
                         .spawn((
                             StateScoped(AppState::InMatch),
-                            ShipGhost { owner: ship.0 },
-                            no_longer_detected.last_known,
+                            ShipGhost { owner: ship },
+                            *ship_trans,
                         ))
                         .id(),
                 );
             }
-            DetectionStatus::Detected if current_ghosts.contains_key(&ship.0) => {
+            DetectionStatus::Detected if current_ghosts.contains_key(&ship) => {
                 commands
-                    .entity(current_ghosts.remove(&ship.0).unwrap())
+                    .entity(current_ghosts.remove(&ship).unwrap())
                     .despawn();
             }
-            DetectionStatus::Never => assert!(!current_ghosts.contains_key(&ship.0)),
+            DetectionStatus::Never => assert!(!current_ghosts.contains_key(&ship)),
             _ => (),
         }
     }
 
-    for (ship_entity, ghost_entity) in &current_ghosts {
-        if !ships.contains(*ship_entity) {
-            commands.entity(*ghost_entity).despawn();
+    for (ship_entity, ghost_entity) in current_ghosts.clone() {
+        if !all_ships.contains(ship_entity) {
+            commands.entity(ghost_entity).despawn();
+            current_ghosts.remove(&ship_entity);
         }
     }
 }
@@ -277,11 +239,11 @@ fn update_bullet_displays(
             );
         } else {
             sprite.color = settings.team_colors(team, *this_client).ship_color;
-            let double_height = 1000.;
-            let height_scaling = 1. + trans.translation.z / double_height;
-            sprite.custom_size =
-                Some(vec2(0.5, 2.) * height_scaling * settings.bullet_icon_scale * zoom.0);
         }
+        let double_height = 1000.;
+        let height_scaling = 1. + trans.translation.z.clamp(0., 20_000.) / double_height;
+        sprite.custom_size =
+            Some(vec2(0.5, 2.) * height_scaling * settings.bullet_icon_scale * zoom.0);
     }
 }
 
@@ -334,19 +296,17 @@ fn update_ship_displays(
         &Transform,
         &Team,
         Option<&Selected>,
-        Option<&Detected>,
-        Option<&NoLongerDetected>,
+        &DetectionStatus,
     )>,
     this_client: Res<ThisClient>,
     settings: Res<PlayerSettings>,
     zoom: Res<MapZoom>,
 ) {
-    for (ship, mut sprite, trans, team, selected, detected, no_longer_detected) in ships {
+    for (ship, mut sprite, trans, team, selected, detection_status) in ships {
         let is_selected = selected.is_some();
-        let detection_status = DetectionStatus::from_options(detected, no_longer_detected);
         let sprite_size = vec2(1., 1.) * settings.ship_icon_scale * zoom.0;
 
-        if !team.is_this_client(*this_client) && !detection_status.is_detected() {
+        if !team.is_this_client(*this_client) && !(*detection_status == DetectionStatus::Detected) {
             *sprite = Sprite::default();
             continue;
         } else {
@@ -367,7 +327,7 @@ fn update_ship_displays(
             );
         }
 
-        if team.is_this_client(*this_client) || detection_status.is_detected() {
+        if team.is_this_client(*this_client) || *detection_status == DetectionStatus::Detected {
             // Gun range circle
             if let Some(t) = ship
                 .template
@@ -386,6 +346,7 @@ fn update_ship_displays(
                     .resolution(128);
             }
 
+            // Detection circle
             gizmos
                 .circle_2d(
                     Isometry2d::from_translation(trans.translation.truncate()),
@@ -397,43 +358,29 @@ fn update_ship_displays(
     }
 }
 
-fn update_selected_ship_orders(
-    mut commands: Commands,
+fn update_selected_ship_orders_display(
     mut gizmos: Gizmos,
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    mouse_pos: Res<CursorWorldPos>,
-    all_ships: Query<(Entity, &Transform, &Team, Option<&NoLongerDetected>), With<Ship>>,
-    mut ships_selected: Query<(
-        Entity,
-        &Transform,
-        &Selected,
-        &Ship,
-        Option<&FireTarget>,
-        Option<&mut MoveOrder>,
-    )>,
-    this_client: Res<ThisClient>,
+    ships_selected: Query<
+        (&Ship, &Transform, Option<&FireTarget>, Option<&MoveOrder>),
+        With<Selected>,
+    >,
+    transforms: Query<&Transform>,
     settings: Res<PlayerSettings>,
     zoom: Res<MapZoom>,
-    shared_entities: Res<SharedEntityTracking>,
-    mut server: ResMut<ServerConnection>,
 ) {
-    // Display
-    for selected in &ships_selected {
+    for (selected_ship, selected_trans, selected_fire_target, selected_move_order) in
+        &ships_selected
+    {
         let circle_size = zoom.0 * settings.ship_icon_scale * 0.5 * 1.4;
         gizmos
             .circle_2d(
-                Isometry2d::from_translation(selected.1.translation.truncate()),
+                Isometry2d::from_translation(selected_trans.translation.truncate()),
                 circle_size,
                 Color::WHITE,
             )
             .resolution(10);
-        if let Some(targ) = selected.4.and_then(|targ| all_ships.get(targ.ship).ok()) {
-            let draw_pos = targ
-                .3
-                .map_or(*targ.1, |no_longer| no_longer.last_known)
-                .translation
-                .truncate();
+        if let Some(targ) = selected_fire_target.and_then(|targ| transforms.get(targ.ship).ok()) {
+            let draw_pos = targ.translation.truncate();
             gizmos
                 .circle_2d(
                     Isometry2d::from_translation(draw_pos),
@@ -443,18 +390,37 @@ fn update_selected_ship_orders(
                 .resolution(10);
         }
 
-        if let Some(move_order) = selected.5 {
+        if let Some(move_order) = selected_move_order {
             if !move_order.waypoints.is_empty() {
                 gizmos.linestrip_2d(
-                    std::iter::once(selected.1.translation.truncate())
+                    std::iter::once(selected_trans.translation.truncate())
                         .chain(move_order.waypoints.iter().copied()),
                     Color::WHITE,
                 );
             }
         }
     }
+}
 
-    // Orders
+fn update_selected_ship_orders(
+    mut commands: Commands,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mouse_pos: Res<CursorWorldPos>,
+    all_ships: Query<(Entity, &Transform, &Team), With<Ship>>,
+    mut ships_selected: Query<(
+        Entity,
+        &Transform,
+        &Selected,
+        &Ship,
+        Option<&FireTarget>,
+        Option<&mut MoveOrder>,
+    )>,
+    this_client: Res<ThisClient>,
+    zoom: Res<MapZoom>,
+    shared_entities: Res<SharedEntityTracking>,
+    mut server: ResMut<ServerConnection>,
+) {
     for ship in &mut ships_selected {
         let mut new_move_order = None;
         let mut new_fire_target = None;
@@ -636,10 +602,11 @@ pub fn run() {
             (
                 update_selection,
                 update_selected_ship_orders.after(update_selection),
+                update_selected_ship_orders_display.after(update_selected_ship_orders),
                 update_ship_ghosts,
                 update_ship_ghosts_display.after(update_ship_ghosts),
                 update_camera,
-                draw_background.after(update_camera),
+                draw_background,
                 update_bullet_displays,
                 update_ship_displays,
             )

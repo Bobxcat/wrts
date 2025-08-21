@@ -1,10 +1,16 @@
 use std::{collections::HashMap, time::Instant};
 
-use bevy::prelude::*;
+use bevy::{
+    log::{
+        Level,
+        tracing::{Instrument, span},
+    },
+    prelude::*,
+};
 use wrts_messaging::{Client2Match, ClientSharedInfo, Match2Client, Message, SharedEntityId};
 
 use crate::{
-    AppState, Bullet, Detected, Health, MoveOrder, NoLongerDetected, PlayerSettings, Team,
+    AppState, Bullet, DetectionStatus, Health, MoveOrder, PlayerSettings, Team,
     networking::{ClientInfo, ServerConnection, ThisClient},
     ship::Ship,
 };
@@ -53,6 +59,10 @@ mod shared_entity_tracking {
             if let Some(old_local) = self.shared2entity.insert(shared, local) {
                 warn!("Inserted {old_local} over {local} for shared entity: {shared:?}");
             }
+        }
+
+        pub fn get_by_shared(&self, shared: SharedEntityId) -> Option<Entity> {
+            self.shared2entity.get(&shared).copied()
         }
 
         pub fn remove_by_shared(&mut self, shared: SharedEntityId) -> Option<Entity> {
@@ -154,8 +164,10 @@ fn in_match_networking(
     mut commands: Commands,
     mut server: ResMut<ServerConnection>,
     mut shared_entities: ResMut<SharedEntityTracking>,
-    mut transforms: Query<&mut Transform>,
 ) -> Option<()> {
+    // Note: All network actions are queued instead of running of a query,
+    // so that previous actions are flushed (i.e. creating a ship then updating that ship's position)
+
     while let Ok(msg) = server.recv_next() {
         match msg {
             Message::Match2Client(Match2Client::PrintMsg(s)) => {
@@ -181,6 +193,7 @@ fn in_match_networking(
                         Ship {
                             template: ship_base.to_template(),
                         },
+                        DetectionStatus::Never,
                         Team(team),
                         Health(health),
                         Transform {
@@ -218,11 +231,15 @@ fn in_match_networking(
                 shared_entities.insert(id, local);
             }
             Message::Match2Client(Match2Client::SetEntityPos { id, pos }) => {
-                let Ok(mut trans) = transforms.get_mut(shared_entities[id]) else {
-                    continue;
-                };
-                trans.translation.x = pos.x;
-                trans.translation.y = pos.y;
+                commands.queue(move |world: &mut World| {
+                    let Some(local) = world.resource::<SharedEntityTracking>().get_by_shared(id)
+                    else {
+                        return;
+                    };
+                    let mut entity = world.entity_mut(local);
+                    let mut trans = entity.get_mut::<Transform>().unwrap();
+                    trans.translation = pos;
+                });
             }
             Message::Match2Client(Match2Client::SetMoveOrder { id, waypoints }) => {
                 commands
@@ -232,31 +249,19 @@ fn in_match_networking(
             Message::Match2Client(Match2Client::SetDetection {
                 id,
                 currently_detected,
-                last_known_pos,
             }) => {
-                let mut entity = commands.entity(shared_entities[id]);
-                match currently_detected {
-                    true => {
-                        entity.insert(Detected);
-                    }
-                    false => {
-                        entity.try_remove::<Detected>();
-                    }
-                }
-                match last_known_pos {
-                    Some((pos, rot)) => {
-                        entity.insert(NoLongerDetected {
-                            last_known: Transform {
-                                translation: pos.extend(0.),
-                                rotation: rot,
-                                ..default()
-                            },
-                        });
-                    }
-                    None => {
-                        entity.try_remove::<NoLongerDetected>();
-                    }
-                }
+                commands.queue(move |world: &mut World| {
+                    let local = world.resource::<SharedEntityTracking>()[id];
+                    let mut entity = world.entity_mut(local);
+                    let mut det = entity.get_mut::<DetectionStatus>().unwrap();
+
+                    *det = match (det.clone(), currently_detected) {
+                        (_, true) => DetectionStatus::Detected,
+                        (DetectionStatus::Never, false) => DetectionStatus::Never,
+                        (DetectionStatus::Detected, false)
+                        | (DetectionStatus::UnDetected, false) => DetectionStatus::UnDetected,
+                    };
+                });
             }
             Message::Match2Client(Match2Client::InitA { .. })
             | Message::Match2Client(Match2Client::InitC { .. })
@@ -285,15 +290,4 @@ fn in_match_networking_none_handler(
     }
 }
 
-// fn send_move_order_updates(
-//     mut server: ResMut<ServerConnection>,
-//     shared_entities: Res<SharedEntityTracking>,
-//     move_orders: Query<(Entity, &MoveOrder), Changed<MoveOrder>>,
-// ) {
-//     for (local, move_order) in move_orders {
-//         let _ = server.send(Message::Client2Match(Client2Match::SetMoveOrder {
-//             id: shared_entities[local],
-//             waypoints: move_order.waypoints.clone(),
-//         }));
-//     }
-// }
+//

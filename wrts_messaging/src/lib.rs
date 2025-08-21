@@ -88,7 +88,7 @@ pub enum Match2Client {
     },
     SetEntityPos {
         id: SharedEntityId,
-        pos: Vec2,
+        pos: Vec3,
     },
     SetMoveOrder {
         id: SharedEntityId,
@@ -97,7 +97,6 @@ pub enum Match2Client {
     SetDetection {
         id: SharedEntityId,
         currently_detected: bool,
-        last_known_pos: Option<(Vec2, Quat)>,
     },
 }
 

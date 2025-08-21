@@ -7,6 +7,7 @@ edition = "2024"
 wrts_messaging = { path = "../wrts_messaging" }
 wrts_match_shared = { path = "../wrts_match_shared" }
 bevy = { version = "0.16.1", features = ["track_location"] }
+ordered-float = "5.0.0"
 anyhow = "1.0.99"
 itertools = "0.14.0"
 enum-map = "2.7.3"

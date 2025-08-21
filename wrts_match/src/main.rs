@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     ops::{Index, IndexMut},
+    time::Duration,
 };
 
 use bevy::{prelude::*, window::ExitCondition};
@@ -9,13 +10,15 @@ use itertools::Itertools;
 use wrts_messaging::{ClientId, Match2Client, Message, WrtsMatchMessage};
 
 use crate::{
+    detection::{DetectionPlugin, DetectionStatus, DetectionSystems},
     initialize_game::initalize_game,
     math_utils::BulletProblemRes,
     networking::{ClientInfo, MessagesSend, NetworkingPlugin, SharedEntityTracking},
     ship::{Ship, apply_dispersion},
-    spawn_entity::SpawnBulletCommand,
+    spawn_entity::{DespawnNetworkedEntityCommand, SpawnBulletCommand},
 };
 
+mod detection;
 mod initialize_game;
 mod math_utils;
 mod networking;
@@ -157,7 +160,7 @@ fn move_bullets(
     for (entity, _bullet, trans, mut bullet_vel) in q {
         bullet_vel.0.z -= rules.gravity * time.delta_secs();
         if trans.translation.z <= -100. {
-            commands.entity(entity).despawn();
+            commands.queue(DespawnNetworkedEntityCommand { entity });
         }
     }
 }
@@ -166,6 +169,9 @@ fn collide_bullets(
     mut commands: Commands,
     bullets: Query<(Entity, &Bullet, &Transform, &Team)>,
     mut ships: Query<(Entity, &Ship, &Transform, &Team, &mut Health)>,
+    shared_entities: Res<SharedEntityTracking>,
+    clients: Query<&ClientInfo>,
+    msgs_tx: Res<MessagesSend>,
 ) {
     for (bullet_entity, bullet, bullet_trans, bullet_team) in bullets {
         for (ship_entity, _ship, ship_trans, ship_team, mut ship_health) in &mut ships {
@@ -177,141 +183,14 @@ fn collide_bullets(
                     continue;
                 }
                 ship_health.0 -= bullet.damage;
-                commands.entity(bullet_entity).despawn();
+
+                commands.queue(DespawnNetworkedEntityCommand {
+                    entity: bullet_entity,
+                });
                 if ship_health.0 <= 0. {
-                    commands.entity(ship_entity).despawn();
-                    break;
-                }
-            }
-        }
-    }
-}
-
-/// NOT A COMPONENT
-#[derive(Debug, Clone, Copy)]
-pub enum DetectionStatus {
-    Detected,
-    NoLonger(NoLongerDetected),
-    Never,
-}
-
-impl DetectionStatus {
-    pub fn from_options(detected: Option<&Detected>, no_longer: Option<&NoLongerDetected>) -> Self {
-        match (detected, no_longer) {
-            (Some(_), None) => Self::Detected,
-            (_, Some(n)) => Self::NoLonger(*n),
-            (None, None) => Self::Never,
-        }
-    }
-
-    pub fn is_detected(&self) -> bool {
-        match self {
-            Self::Detected => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_no_longer(&self) -> bool {
-        match self {
-            Self::NoLonger(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_never(&self) -> bool {
-        match self {
-            Self::Never => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_eq_variant(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-}
-
-/// Currently detected
-#[derive(Debug, Default, Component, Clone, Copy)]
-pub struct Detected;
-
-/// Has been detected before, but isn't currently
-#[derive(Debug, Default, Component, Clone, Copy)]
-pub struct NoLongerDetected {
-    pub last_known: Transform,
-}
-
-fn update_detected_ships(
-    mut commands: Commands,
-    ships: Query<(
-        Entity,
-        &Ship,
-        &Team,
-        &Transform,
-        Option<&Detected>,
-        Option<&NoLongerDetected>,
-    )>,
-    clients: Query<&ClientInfo>,
-    shared_entities: Res<SharedEntityTracking>,
-    msgs_tx: Res<MessagesSend>,
-) {
-    for ship in &ships {
-        let mut new_detection = None;
-
-        let detection_last_frame = DetectionStatus::from_options(ship.4, ship.5);
-        let is_detected = ships.iter().any(|other_ship| {
-            other_ship.2 != ship.2
-                && other_ship
-                    .3
-                    .translation
-                    .truncate()
-                    .distance(ship.3.translation.truncate())
-                    <= ship.1.template.detection
-        });
-        if is_detected {
-            new_detection = Some((Some(Detected), None));
-        }
-        if !is_detected && detection_last_frame.is_detected() {
-            new_detection = Some((
-                None,
-                Some(NoLongerDetected {
-                    last_known: *ship.3,
-                }),
-            ));
-        }
-
-        if let Some((detected, no_longer_detected)) = new_detection
-            && !DetectionStatus::from_options(detected.as_ref(), no_longer_detected.as_ref())
-                .is_eq_variant(&detection_last_frame)
-        {
-            for cl in clients {
-                if let Some(id) = shared_entities.get_by_local(ship.0) {
-                    msgs_tx.send(WrtsMatchMessage {
-                        client: cl.info.id,
-                        msg: Message::Match2Client(Match2Client::SetDetection {
-                            id,
-                            currently_detected: detected.is_some(),
-                            last_known_pos: no_longer_detected.map(|n| {
-                                (n.last_known.translation.truncate(), n.last_known.rotation)
-                            }),
-                        }),
+                    commands.queue(DespawnNetworkedEntityCommand {
+                        entity: ship_entity,
                     });
-                }
-            }
-            let mut entity = commands.entity(ship.0);
-            match detected {
-                Some(d) => {
-                    entity.insert(d);
-                }
-                None => {
-                    entity.try_remove::<Detected>();
-                }
-            }
-            match no_longer_detected {
-                Some(n) => {
-                    entity.insert(n);
-                }
-                None => {
-                    entity.try_remove::<NoLongerDetected>();
                 }
             }
         }
@@ -327,6 +206,7 @@ fn fire_bullets(
         &Transform,
         &Velocity,
         Option<&FireTarget>,
+        &DetectionStatus,
     )>,
     time: Res<Time>,
     rules: Res<GameRules>,
@@ -356,16 +236,18 @@ fn fire_bullets(
         let team_opposite = if teams[0] == team { teams[1] } else { teams[0] };
 
         let (targ_trans, targ_vel) = {
-            let targ = ships_by_team[team][ship_idx].5.and_then(|targ| {
-                ships_by_team[team_opposite]
-                    .iter()
-                    .find(|(ship, _, _, _, _, _)| *ship == targ.ship)
-            });
+            let targ = ships_by_team[team][ship_idx]
+                .5
+                .and_then(|targ| {
+                    ships_by_team[team_opposite]
+                        .iter()
+                        .find(|(ship, _, _, _, _, _, _)| *ship == targ.ship)
+                })
+                .filter(|(_, _, _, _, _, _, targ_detection)| targ_detection.is_detected);
 
-            let Some((_, _, _, targ_trans, targ_vel, _)) = targ else {
-                let turret_timer = &mut ships_by_team[team_opposite][ship_idx]
-                    .2
-                    .turret_reload_timers[turret_idx];
+            let Some((_, _, _, targ_trans, targ_vel, _, _)) = targ else {
+                let turret_timer =
+                    &mut ships_by_team[team][ship_idx].2.turret_reload_timers[turret_idx];
                 if !turret_timer.finished() {
                     turret_timer.tick(time.delta());
                 }
@@ -376,8 +258,8 @@ fn fire_bullets(
         let targ_trans = **targ_trans;
         let targ_vel = **targ_vel;
 
-        let (ship_entity, _ship_team, ship, ship_trans, _ship_vel, _ship_targ) =
-            &mut ships_by_team[team_opposite][ship_idx];
+        let (ship_entity, _, ship, ship_trans, _, _ship_targ, _) =
+            &mut ships_by_team[team][ship_idx];
         let turret_template = &ship.template.turrets[turret_idx];
         let turret_reload_timer = &mut ship.turret_reload_timers[turret_idx];
 
@@ -425,6 +307,7 @@ fn fire_bullets(
                 commands.queue(SpawnBulletCommand {
                     team,
                     owning_ship: *ship_entity,
+                    update_firing_detection_timer: Some(Duration::from_secs(20)),
                     damage: turret_template.damage,
                     pos: bullet_trans.translation,
                     rot: bullet_trans.rotation,
@@ -460,7 +343,14 @@ fn main() -> Result<()> {
                 }),
         )
         .add_plugins(NetworkingPlugin)
+        .add_plugins(DetectionPlugin)
         .add_systems(Startup, initalize_game)
+        .configure_sets(
+            Update,
+            DetectionSystems
+                .after(apply_velocity)
+                .after(collide_bullets),
+        )
         .add_systems(
             Update,
             (
@@ -468,10 +358,7 @@ fn main() -> Result<()> {
                 move_bullets,
                 apply_velocity,
                 collide_bullets.after(move_bullets).after(apply_velocity),
-                update_detected_ships
-                    .after(apply_velocity)
-                    .after(collide_bullets),
-                fire_bullets.after(update_detected_ships),
+                fire_bullets.after(DetectionSystems),
             ),
         )
         .run();

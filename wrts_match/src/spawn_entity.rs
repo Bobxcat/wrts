@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use bevy::prelude::*;
 use itertools::Itertools;
 use wrts_match_shared::ship_template::ShipTemplateId;
@@ -5,9 +7,36 @@ use wrts_messaging::{Match2Client, Message, WrtsMatchMessage};
 
 use crate::{
     Bullet, Health, Team, Velocity,
+    detection::{BaseDetection, CanDetect, DetectionStatus},
     networking::{ClientInfo, MessagesSend, SharedEntityTracking},
     ship::Ship,
 };
+
+pub struct DespawnNetworkedEntityCommand {
+    pub entity: Entity,
+}
+
+impl Command for DespawnNetworkedEntityCommand {
+    fn apply(self, world: &mut World) -> () {
+        let _ = world.try_despawn(self.entity);
+
+        let Some((shared, _)) = world
+            .resource_mut::<SharedEntityTracking>()
+            .remove_by_local(self.entity)
+        else {
+            return;
+        };
+
+        let mut clients = world.query::<&ClientInfo>();
+        let msgs_tx = world.resource::<MessagesSend>();
+        for cl in clients.iter(world) {
+            msgs_tx.send(WrtsMatchMessage {
+                client: cl.info.id,
+                msg: Message::Match2Client(Match2Client::DestroyEntity(shared)),
+            });
+        }
+    }
+}
 
 pub struct SpawnShipCommand {
     pub team: Team,
@@ -31,6 +60,14 @@ impl Command for SpawnShipCommand {
                             .map(|t| Timer::from_seconds(t.reload_secs, TimerMode::Repeating))
                             .collect_vec(),
                     },
+                    BaseDetection(template.detection),
+                    DetectionStatus {
+                        is_detected: false,
+                        detection_increased_by_firing: Timer::new(Duration::ZERO, TimerMode::Once)
+                            .tick(Duration::MAX)
+                            .clone(),
+                    },
+                    CanDetect,
                     self.health.clone(),
                     self.team,
                     Transform {
@@ -64,6 +101,7 @@ impl Command for SpawnShipCommand {
 pub struct SpawnBulletCommand {
     pub team: Team,
     pub owning_ship: Entity,
+    pub update_firing_detection_timer: Option<Duration>,
     pub damage: f64,
     pub pos: Vec3,
     pub rot: Quat,
@@ -89,6 +127,15 @@ impl Command for SpawnBulletCommand {
                 ))
                 .id()
         };
+
+        if let Some(t) = self.update_firing_detection_timer {
+            let mut det = world.get_mut::<DetectionStatus>(self.owning_ship).unwrap();
+            det.detection_increased_by_firing = Timer::new(
+                t.max(det.detection_increased_by_firing.remaining()),
+                TimerMode::Once,
+            );
+        }
+
         let shared_id = world.resource_mut::<SharedEntityTracking>().insert(entity);
 
         let mut clients = world.query::<&ClientInfo>();

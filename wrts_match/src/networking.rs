@@ -336,7 +336,7 @@ fn send_transform_updates(
                 client: cl.info.id,
                 msg: Message::Match2Client(Match2Client::SetEntityPos {
                     id: shared,
-                    pos: trans.translation.truncate(),
+                    pos: trans.translation,
                 }),
             });
         }
