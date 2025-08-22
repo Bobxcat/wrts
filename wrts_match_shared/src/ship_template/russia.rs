@@ -5,7 +5,7 @@ impl ShipTemplate {
     pub(super) fn kiev() -> ShipTemplate {
         let main_battery_prefab = Turret {
             reload_secs: 5.,
-            damage: 10.,
+            damage: 200.,
             muzzle_vel: 850.,
             max_range: 11_140.,
             dispersion: Dispersion {

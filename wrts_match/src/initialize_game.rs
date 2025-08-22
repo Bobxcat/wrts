@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use itertools::Itertools;
 use wrts_match_shared::ship_template::{ShipTemplate, ShipTemplateId};
 use wrts_messaging::{Match2Client, Message, WrtsMatchMessage};
 
@@ -10,15 +11,35 @@ use crate::{
 };
 
 pub fn initalize_game(mut commands: Commands, teams: Query<&ClientInfo>) {
-    let mut p = vec2(0., 0.);
-    for team in teams {
-        commands.queue(SpawnShipCommand {
-            team: Team(team.info.id),
-            ship_base: ShipTemplateId::oland(),
-            health: Health(ShipTemplate::from_id(ShipTemplateId::oland()).max_health),
-            pos: p,
-            rot: Quat::from_rotation_z(0.),
+    let teams: [&ClientInfo; 2] = teams
+        .into_iter()
+        .collect_array()
+        .expect("There aren't two clients!!!");
+    for team_idx in 0..2 {
+        let pos_base = match team_idx {
+            0 => vec2(8000., 0.),
+            _ => vec2(-8000., 0.),
+        };
+        let rot = Quat::from_rotation_z(match team_idx {
+            0 => std::f32::consts::PI,
+            _ => 0.,
         });
-        p += vec2(100., 100.);
+        let ships = [
+            ShipTemplateId::oland(),
+            ShipTemplateId::bismarck(),
+            ShipTemplateId::kiev(),
+        ];
+        for ship_idx in 0..ships.len() {
+            let offset_side = if ship_idx % 2 == 0 { -1. } else { 1. };
+            let offset_ct = (ship_idx + 1).div_euclid(2) as f32;
+            let pos = pos_base + vec2(0., 400.) * offset_ct * offset_side;
+            commands.queue(SpawnShipCommand {
+                team: Team(teams[team_idx].info.id),
+                ship_base: ships[ship_idx],
+                health: Health(ShipTemplate::from_id(ships[ship_idx]).max_health),
+                pos,
+                rot,
+            });
+        }
     }
 }

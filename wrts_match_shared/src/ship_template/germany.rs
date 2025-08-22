@@ -5,7 +5,7 @@ impl ShipTemplate {
     pub(super) fn bismarck() -> ShipTemplate {
         let main_battery_prefab = Turret {
             reload_secs: 26.,
-            damage: 100.,
+            damage: 1000.,
             muzzle_vel: 820.,
             max_range: 21_200.,
             dispersion: Dispersion {

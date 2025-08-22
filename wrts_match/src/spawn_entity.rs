@@ -102,20 +102,20 @@ pub struct SpawnBulletCommand {
     pub team: Team,
     pub bullet: Bullet,
     pub update_firing_detection_timer: Option<Duration>,
-    pub pos: Vec3,
-    pub rot: Quat,
 }
 
 impl Command for SpawnBulletCommand {
     fn apply(self, world: &mut World) -> () {
+        let rot = Quat::from_rotation_z(self.bullet.inital_vel.truncate().to_angle());
+
         let entity = {
             world
                 .spawn((
                     self.bullet.clone(),
                     self.team,
                     Transform {
-                        translation: self.pos,
-                        rotation: self.rot,
+                        translation: self.bullet.inital_pos,
+                        rotation: rot,
                         ..default()
                     },
                 ))
@@ -149,8 +149,8 @@ impl Command for SpawnBulletCommand {
                     team: self.team.0,
                     owning_ship,
                     damage: self.bullet.damage,
-                    pos: self.pos,
-                    rot: self.rot,
+                    pos: self.bullet.inital_pos,
+                    rot,
                 }),
             });
         }

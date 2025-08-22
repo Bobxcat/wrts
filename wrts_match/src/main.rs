@@ -218,15 +218,35 @@ fn collide_bullets(
     mut ships: Query<(Entity, &Ship, &Transform, &Team, &mut Health)>,
 ) {
     for (bullet_entity, bullet, bullet_trans, bullet_team) in bullets {
-        for (ship_entity, _ship, ship_trans, ship_team, mut ship_health) in &mut ships {
+        for (ship_entity, ship, ship_trans, ship_team, mut ship_health) in &mut ships {
             if bullet_team == ship_team {
                 continue;
             }
-            if ship_trans.translation.distance(bullet_trans.translation) <= 10. {
-                if ship_health.0 <= 0. {
-                    continue;
-                }
-                ship_health.0 -= bullet.damage;
+            if ship_health.0 <= 0. {
+                continue;
+            }
+
+            // Calculate collisions in the local space of the ship hull
+            let hull = &ship.template.hull;
+            let ship_hull_min = vec3(-0.5 * hull.length, -0.5 * hull.width, -hull.draft);
+            let ship_hull_max = vec3(0.5 * hull.length, 0.5 * hull.width, hull.freeboard);
+            let bullet_pos =
+                ship_trans.rotation * (bullet_trans.translation - ship_trans.translation);
+            // FIXME?: we're assuming the bullet impacts when the bullet hits the water
+            // Maybe this is fine, because it'll always be approx. correct
+            let bullet_vel = ship_trans.rotation * bullet.inital_vel.with_z(-bullet.inital_vel.z);
+            if Vec3::cmple(ship_hull_min, bullet_pos).all()
+                && Vec3::cmple(bullet_pos, ship_hull_max).all()
+            {
+                let bullet_alignment = bullet_vel.normalize().dot(Vec3::X).abs();
+                let damage = bullet.damage * (1.5 - bullet_alignment as f64);
+                info!(
+                    "Dealing damage:  ship=`{}`, dmg={damage:.2}, health_before={:.2}, align={bullet_alignment:.2}",
+                    ship.template.id.to_name(),
+                    ship_health.0,
+                );
+
+                ship_health.0 -= damage;
 
                 commands.queue(DespawnNetworkedEntityCommand {
                     entity: bullet_entity,
@@ -347,12 +367,10 @@ fn fire_bullets(
 
                 let bullet_start = turret_pos
                     + Vec2::from_angle(bullet_azimuth).rotate(vec2(0., barrel_lateral_offset));
-                let bullet_start = bullet_start.extend(5.);
-                let bullet_trans = Transform {
-                    translation: bullet_start,
-                    rotation: Quat::from_rotation_z(bullet_vel.truncate().to_angle()),
-                    ..default()
-                };
+                // The bullet should start very slightly above the water,
+                // but not by very much since ships have a small draft so
+                // it would mean a lot more missing
+                let bullet_start = bullet_start.extend(0.1);
 
                 let bullet = Bullet {
                     owning_ship: ship_entity,
@@ -370,8 +388,6 @@ fn fire_bullets(
                     team,
                     bullet,
                     update_firing_detection_timer: Some(Duration::from_secs(20)),
-                    pos: bullet_trans.translation,
-                    rot: bullet_trans.rotation,
                 });
             }
         }

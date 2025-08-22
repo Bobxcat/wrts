@@ -5,7 +5,7 @@ impl ShipTemplate {
     pub(super) fn oland() -> ShipTemplate {
         let main_battery_prefab = Turret {
             reload_secs: 2.3,
-            damage: 100.,
+            damage: 150.,
             muzzle_vel: 850.,
             max_range: 10_100.,
             dispersion: Dispersion {

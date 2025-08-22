@@ -323,7 +323,7 @@ fn update_ship_displays(
         };
 
         // HP bar
-        {
+        if *detection_status != DetectionStatus::Never {
             let hp_bar_progress = (health.0 / ship.template.max_health) as f32;
             let hp_bar_y = trans.translation.y - 30. * zoom.0;
             let hp_bar_dims = vec2(35., 5.) * zoom.0;
@@ -342,7 +342,7 @@ fn update_ship_displays(
             );
         }
 
-        if !team.is_this_client(*this_client) && !(*detection_status == DetectionStatus::Detected) {
+        if !team.is_this_client(*this_client) && *detection_status != DetectionStatus::Detected {
             *sprite = Sprite::default();
             continue;
         } else {

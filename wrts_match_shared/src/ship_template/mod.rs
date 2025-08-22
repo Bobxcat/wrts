@@ -146,7 +146,7 @@ pub struct Hull {
     pub width: f32,
     /// Height of the hull above the water
     pub freeboard: f32,
-    /// Height of the hull below the wayer
+    /// Height of the hull below the water
     pub draft: f32,
 }
 
