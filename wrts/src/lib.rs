@@ -137,6 +137,9 @@ pub struct ShipGhost {
     pub owner: Entity,
 }
 
+/// The number of world units per rendered pixel
+///
+/// This controls the `zoom` parameter of the camera
 #[derive(Resource, Debug, Default, Clone, Copy)]
 struct MapZoom(pub f32);
 
@@ -258,10 +261,14 @@ fn make_camera(mut commands: Commands) {
 }
 
 fn update_map_zoom(mut mouse_scroll: EventReader<MouseWheel>, mut zoom: ResMut<MapZoom>) {
+    let scroll_speed = 0.2;
+    let scroll_parts = 4;
     for scroll in mouse_scroll.read() {
-        zoom.0 -= scroll.y;
+        for _ in 0..scroll_parts {
+            zoom.0 -= scroll_speed * scroll.y * zoom.0 * (1. / scroll_parts as f32);
+        }
     }
-    zoom.0 = zoom.0.clamp(0.5, 1000.);
+    zoom.0 = zoom.0.clamp(0.5, 50.);
 }
 
 fn update_camera(
@@ -307,7 +314,7 @@ fn update_ship_displays(
         let sprite_size = {
             let zoom_consistent_size = vec2(1., 1.) * settings.ship_icon_scale * zoom.0;
             let real_size = vec2(ship.template.hull.length, ship.template.hull.width);
-            if zoom_consistent_size.length() > real_size.length() {
+            if zoom_consistent_size.max_element() > real_size.max_element() {
                 zoom_consistent_size
             } else {
                 real_size
@@ -500,8 +507,13 @@ fn update_selected_ship_orders(
     }
 }
 
-fn draw_background(mut gizmos: Gizmos, camera: Query<&Transform, With<MainCamera>>) {
-    let cell_size = vec2(2000., 2000.);
+fn draw_background(
+    mut gizmos: Gizmos,
+    camera: Query<&Transform, With<MainCamera>>,
+    zoom: Res<MapZoom>,
+) {
+    let cell_size = { vec2(1000., 1000.) * if zoom.0 < 10. { 2. } else { 4. } };
+
     let offset = camera
         .single()
         .unwrap()
@@ -509,14 +521,20 @@ fn draw_background(mut gizmos: Gizmos, camera: Query<&Transform, With<MainCamera
         .truncate()
         .div_euclid(cell_size)
         * cell_size;
+
     gizmos
         .grid_2d(
             Isometry2d::from_translation(offset),
-            UVec2::splat(100),
+            UVec2::splat(50),
             cell_size,
             Color::WHITE,
         )
         .outer_edges();
+    gizmos.rect_2d(
+        Isometry2d::IDENTITY,
+        wrts_match_shared::map_bounds().1 - wrts_match_shared::map_bounds().0,
+        Color::linear_rgb(0.8, 0.2, 0.2),
+    );
 }
 
 fn only_modifier_keys_pressed(

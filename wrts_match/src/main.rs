@@ -146,6 +146,18 @@ fn update_ship_velocity(
     }
 }
 
+fn force_ship_in_map(ships: Query<&mut Transform, With<Ship>>) {
+    let (lower, upper) = wrts_match_shared::map_bounds();
+
+    for mut trans in ships {
+        trans.translation = trans
+            .translation
+            .truncate()
+            .clamp(lower, upper)
+            .extend(trans.translation.z);
+    }
+}
+
 #[derive(Debug, Component, Clone)]
 #[require(Team, Sprite, Transform)]
 struct Bullet {
@@ -402,9 +414,10 @@ fn main() -> Result<()> {
         .add_systems(
             Update,
             (
-                update_ship_velocity.before(apply_velocity),
+                update_ship_velocity,
+                apply_velocity.after(update_ship_velocity),
+                force_ship_in_map.after(apply_velocity),
                 move_bullets,
-                apply_velocity,
                 collide_bullets.after(move_bullets),
                 fire_bullets.after(DetectionSystems),
             ),
