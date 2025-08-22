@@ -298,18 +298,19 @@ fn update_camera(
 fn update_ship_displays(
     mut gizmos: Gizmos,
     ships: Query<(
+        &Team,
         &Ship,
         &mut Sprite,
         &Transform,
-        &Team,
         Option<&Selected>,
         &DetectionStatus,
+        &Health,
     )>,
     this_client: Res<ThisClient>,
     settings: Res<PlayerSettings>,
     zoom: Res<MapZoom>,
 ) {
-    for (ship, mut sprite, trans, team, selected, detection_status) in ships {
+    for (team, ship, mut sprite, trans, selected, detection_status, health) in ships {
         let is_selected = selected.is_some();
         let sprite_size = {
             let zoom_consistent_size = vec2(1., 1.) * settings.ship_icon_scale * zoom.0;
@@ -320,6 +321,26 @@ fn update_ship_displays(
                 real_size
             }
         };
+
+        // HP bar
+        {
+            let hp_bar_progress = (health.0 / ship.template.max_health) as f32;
+            let hp_bar_y = trans.translation.y - 30. * zoom.0;
+            let hp_bar_dims = vec2(35., 5.) * zoom.0;
+            let hp_bar_start = trans.translation.x - hp_bar_dims.x / 2.;
+            let hp_bar_end = trans.translation.x + hp_bar_dims.x / 2.;
+            let hp_bar_mid = hp_bar_start.lerp(hp_bar_end, hp_bar_progress);
+            gizmos.line_2d(
+                vec2(hp_bar_start, hp_bar_y),
+                vec2(hp_bar_mid, hp_bar_y),
+                Color::linear_rgb(0.9, 0.1, 0.1),
+            );
+            gizmos.line_2d(
+                vec2(hp_bar_mid, hp_bar_y),
+                vec2(hp_bar_end, hp_bar_y),
+                Color::linear_rgb(0.1, 0.1, 0.1),
+            );
+        }
 
         if !team.is_this_client(*this_client) && !(*detection_status == DetectionStatus::Detected) {
             *sprite = Sprite::default();

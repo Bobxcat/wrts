@@ -7,7 +7,7 @@ impl ShipTemplate {
             reload_secs: 5.,
             damage: 10.,
             muzzle_vel: 850.,
-            max_range: 11140.,
+            max_range: 11_140.,
             dispersion: Dispersion {
                 vertical: 3.5,
                 horizontal: 8.8,
@@ -27,8 +27,8 @@ impl ShipTemplate {
                 draft: 4.2,
             },
             max_speed: Speed::from_kts(42.5 * SHIP_SPEED_SCALE),
-            max_health: 17500.,
-            detection: 8540.,
+            max_health: 17_500.,
+            detection: 8_540.,
             turrets: main_battery_prefab.with_locations([
                 HullLocation::new_l(HullLocationAxis::FromCenter(50.)),
                 HullLocation::new_l(HullLocationAxis::FromCenter(40.)),

@@ -5,9 +5,9 @@ impl ShipTemplate {
     pub(super) fn oland() -> ShipTemplate {
         let main_battery_prefab = Turret {
             reload_secs: 2.3,
-            damage: 10.,
+            damage: 100.,
             muzzle_vel: 850.,
-            max_range: 10100.,
+            max_range: 10_100.,
             dispersion: Dispersion {
                 vertical: 3.5,
                 horizontal: 9.,
@@ -27,11 +27,11 @@ impl ShipTemplate {
                 draft: 3.4,
             },
             max_speed: Speed::from_kts(35. * SHIP_SPEED_SCALE),
-            max_health: 14100.,
-            detection: 7200.,
+            max_health: 14_100.,
+            detection: 7_200.,
             turrets: main_battery_prefab.with_locations([
-                HullLocation::new_l(HullLocationAxis::FromCenter(80.)),
-                HullLocation::new_l(HullLocationAxis::FromCenter(-80.)),
+                HullLocation::new_l(HullLocationAxis::FromCenter(40.)),
+                HullLocation::new_l(HullLocationAxis::FromCenter(-40.)),
             ]),
         }
     }

@@ -230,7 +230,7 @@ fn in_match_networking(
                     .id();
                 shared_entities.insert(id, local);
             }
-            Message::Match2Client(Match2Client::SetEntityTrans { id, pos, rot }) => {
+            Message::Match2Client(Match2Client::SetTrans { id, pos, rot }) => {
                 commands.queue(move |world: &mut World| {
                     let Some(local) = world.resource::<SharedEntityTracking>().get_by_shared(id)
                     else {
@@ -240,6 +240,20 @@ fn in_match_networking(
                     let mut trans = entity.get_mut::<Transform>().unwrap();
                     trans.translation = pos;
                     trans.rotation = rot;
+                });
+            }
+            Message::Match2Client(Match2Client::SetHealth {
+                id,
+                health: new_health,
+            }) => {
+                commands.queue(move |world: &mut World| {
+                    let Some(local) = world.resource::<SharedEntityTracking>().get_by_shared(id)
+                    else {
+                        return;
+                    };
+                    let mut entity = world.entity_mut(local);
+                    let mut health = entity.get_mut::<Health>().unwrap();
+                    health.0 = new_health;
                 });
             }
             Message::Match2Client(Match2Client::SetMoveOrder { id, waypoints }) => {

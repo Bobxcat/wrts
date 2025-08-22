@@ -13,14 +13,16 @@ use wrts_messaging::{
 use crate::detection::DetectionStatus;
 pub use crate::networking::shared_entity_tracking::SharedEntityTracking;
 use crate::ship::Ship;
-use crate::{FireTarget, MoveOrder, Team};
+use crate::{FireTarget, Health, MoveOrder, Team};
 
 pub struct NetworkingPlugin;
 
 impl Plugin for NetworkingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PreStartup, network_handshake)
-            .add_systems(FixedUpdate, (read_messages, send_transform_updates));
+        app.add_systems(PreStartup, network_handshake).add_systems(
+            FixedUpdate,
+            (read_messages, send_transform_updates, send_health_updates),
+        );
     }
 }
 
@@ -50,7 +52,7 @@ fn stdout_handler(rx: Receiver<WrtsMatchMessage>) {
         match rx.recv() {
             Ok(msg) => {
                 match &msg.msg {
-                    Message::Match2Client(Match2Client::SetEntityTrans { .. }) => {
+                    Message::Match2Client(Match2Client::SetTrans { .. }) => {
                         trace!("Sending: {msg:?}")
                     }
                     _ => info!("Sending: {msg:?}"),
@@ -345,12 +347,35 @@ fn send_transform_updates(
         for cl in clients_to_update {
             msgs_tx.send(WrtsMatchMessage {
                 client: cl,
-                msg: Message::Match2Client(Match2Client::SetEntityTrans {
+                msg: Message::Match2Client(Match2Client::SetTrans {
                     id: shared,
                     pos: trans.translation,
                     rot: trans.rotation,
                 }),
             });
+        }
+    }
+}
+
+fn send_health_updates(
+    healths: Query<(Entity, &Health), Changed<Health>>,
+    clients: Query<&ClientInfo>,
+    msgs_tx: Res<MessagesSend>,
+    shared_entities: Res<SharedEntityTracking>,
+) {
+    let clients = clients.iter().map(|cl| cl.info.id).collect_vec();
+    for (local, health) in healths {
+        let Some(shared) = shared_entities.get_by_local(local) else {
+            continue;
+        };
+        for cl in clients.clone() {
+            msgs_tx.send(WrtsMatchMessage {
+                client: cl,
+                msg: Message::Match2Client(Match2Client::SetHealth {
+                    id: shared,
+                    health: health.0,
+                }),
+            })
         }
     }
 }
