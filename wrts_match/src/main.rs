@@ -105,7 +105,7 @@ struct FireTarget {
 fn update_ship_velocity(
     ships: Query<(
         &Ship,
-        &Transform,
+        &mut Transform,
         &mut Velocity,
         Option<&mut MoveOrder>,
         &Team,
@@ -133,13 +133,15 @@ fn update_ship_velocity(
                 }
             }
         }
-        let new_vel = match ship.3 {
-            Some(order) if order.waypoints.len() > 0 => {
-                let dir = (order.waypoints[0] - ship.1.translation.truncate()).normalize();
-                dir * ship.0.template.max_speed
-            }
-            _ => Vec2::ZERO,
-        };
+        let new_vel = ship
+            .3
+            .and_then(|order| order.waypoints.get(0).copied())
+            .and_then(|next_waypoint| Dir2::new(next_waypoint - ship.1.translation.truncate()).ok())
+            .map(|dir| {
+                ship.1.rotation = Quat::from_rotation_z(dir.to_angle());
+                dir * ship.0.template.max_speed.mps()
+            })
+            .unwrap_or(Vec2::ZERO);
         ship.2.0 = new_vel.extend(0.);
     }
 }
@@ -178,7 +180,7 @@ fn move_bullets(
         // Use an explicit solution for position as a function of time,
         // with P(0) = (bullet inital position) + (aimpoint adjustment)
         // This has the nice benefit of being perfectly accurate
-        trans.translation = vec3(
+        let new_pos = vec3(
             0.,
             0.,
             -0.5 * rules.gravity * bullet.current_flight_time.as_secs_f32().powi(2),
@@ -186,6 +188,11 @@ fn move_bullets(
             + bullet.inital_pos
             + aimpoint_adjustment.extend(0.);
         bullet.current_flight_time += time.delta();
+
+        if let Ok(dir) = Dir2::new((new_pos - trans.translation).truncate()) {
+            trans.rotation = Quat::from_rotation_z(dir.to_angle());
+        }
+        trans.translation = new_pos;
 
         if trans.translation.z <= -100. {
             commands.queue(DespawnNetworkedEntityCommand { entity });
@@ -197,9 +204,6 @@ fn collide_bullets(
     mut commands: Commands,
     bullets: Query<(Entity, &Bullet, &Transform, &Team)>,
     mut ships: Query<(Entity, &Ship, &Transform, &Team, &mut Health)>,
-    shared_entities: Res<SharedEntityTracking>,
-    clients: Query<&ClientInfo>,
-    msgs_tx: Res<MessagesSend>,
 ) {
     for (bullet_entity, bullet, bullet_trans, bullet_team) in bullets {
         for (ship_entity, _ship, ship_trans, ship_team, mut ship_health) in &mut ships {
@@ -284,15 +288,20 @@ fn fire_bullets(
             (*targ, **targ_trans, **targ_vel)
         };
 
-        let (ship_entity, _, ship, ship_trans, _, _ship_targ, _) =
-            &mut ships_by_team[team][ship_idx];
-        let turret_template = &ship.template.turrets[turret_idx];
-        let turret_reload_timer = &mut ship.turret_reload_timers[turret_idx];
+        let (ship_entity, ship, ship_trans) = {
+            let x = &mut ships_by_team[team][ship_idx];
+            (x.0, &mut x.2, *x.3)
+        };
+        let turret = &ship.template.turrets[turret_idx];
 
-        let origin_pos = ship_trans.translation.truncate()
-            + Vec2::from_angle(ship_trans.rotation.to_euler(EulerRot::ZXY).0)
-                .rotate(turret_template.location_on_ship);
+        let turret_pos = turret.location_on_ship.to_absolute(
+            &ship.template.hull,
+            ship_trans.translation.truncate(),
+            ship_trans.rotation,
+        );
         let targ_pos = targ_trans.translation.truncate();
+
+        let turret_reload_timer = &mut ship.turret_reload_timers[turret_idx];
 
         let Some(BulletProblemRes {
             intersection_point,
@@ -302,13 +311,13 @@ fn fire_bullets(
             projectile_azimuth: bullet_azimuth,
             projectile_elevation: _,
         }) = math_utils::bullet_problem(
-            origin_pos,
+            turret_pos,
             targ_pos,
             targ_vel.0.truncate(),
-            turret_template.muzzle_vel as f64,
+            turret.muzzle_vel as f64,
             rules.gravity as f64,
         )
-        .filter(|bp| bp.intersection_dist < turret_template.max_range)
+        .filter(|bp| bp.intersection_dist < turret.max_range)
         else {
             if !turret_reload_timer.finished() {
                 turret_reload_timer.tick(time.delta());
@@ -317,22 +326,24 @@ fn fire_bullets(
         };
 
         for _ in 0..turret_reload_timer.times_finished_this_tick() {
-            for barrel in &turret_template.barrels {
-                let bullet_vel = apply_dispersion(&turret_template.dispersion, bullet_dir)
-                    * turret_template.muzzle_vel as f32;
+            for barrel_idx in 0..turret.barrel_count {
+                let barrel_lateral_offset =
+                    (barrel_idx - (turret.barrel_count - 1) / 2) as f32 * turret.barrel_spacing;
 
-                let bullet_start = origin_pos + Vec2::from_angle(bullet_azimuth).rotate(*barrel);
+                let bullet_vel =
+                    apply_dispersion(&turret.dispersion, bullet_dir) * turret.muzzle_vel as f32;
+
+                let bullet_start = turret_pos
+                    + Vec2::from_angle(bullet_azimuth).rotate(vec2(0., barrel_lateral_offset));
                 let bullet_start = bullet_start.extend(5.);
                 let bullet_trans = Transform {
                     translation: bullet_start,
-                    rotation: Quat::from_rotation_z(
-                        std::f32::consts::FRAC_PI_2 + bullet_vel.truncate().to_angle(),
-                    ),
+                    rotation: Quat::from_rotation_z(bullet_vel.truncate().to_angle()),
                     ..default()
                 };
 
                 let bullet = Bullet {
-                    owning_ship: *ship_entity,
+                    owning_ship: ship_entity,
                     targ_ship: targ,
                     inital_pos: bullet_start,
                     inital_vel: bullet_vel,
@@ -340,7 +351,7 @@ fn fire_bullets(
                     current_aimpoint: intersection_point,
                     expected_flight_time_total: Duration::from_secs_f32(intersection_time),
                     current_flight_time: Duration::ZERO,
-                    damage: turret_template.damage,
+                    damage: turret.damage,
                 };
 
                 commands.queue(SpawnBulletCommand {
@@ -349,7 +360,6 @@ fn fire_bullets(
                     update_firing_detection_timer: Some(Duration::from_secs(20)),
                     pos: bullet_trans.translation,
                     rot: bullet_trans.rotation,
-                    // vel: bullet_vel,
                 });
             }
         }
@@ -395,7 +405,7 @@ fn main() -> Result<()> {
                 update_ship_velocity.before(apply_velocity),
                 move_bullets,
                 apply_velocity,
-                collide_bullets.after(move_bullets).after(apply_velocity),
+                collide_bullets.after(move_bullets),
                 fire_bullets.after(DetectionSystems),
             ),
         )

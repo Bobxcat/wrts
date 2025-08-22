@@ -2,18 +2,44 @@ mod germany;
 mod russia;
 mod sweden;
 
-use glam::{Vec2, vec2};
+use glam::{EulerRot, Quat, Vec2, vec2};
 use paste::paste;
 use serde::{Deserialize, Serialize};
 
 const SHIP_SPEED_SCALE: f32 = 5.2;
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct Speed(f32);
+
+impl Speed {
+    /// meters per second (game units)
+    pub fn from_mps(mps: f32) -> Self {
+        Self(mps)
+    }
+
+    /// meters per second (game units)
+    pub fn mps(self) -> f32 {
+        self.0
+    }
+
+    /// knots
+    pub fn from_kts(kts: f32) -> Self {
+        Self(kts / 1.94384)
+    }
+
+    /// knots
+    pub fn kts(self) -> f32 {
+        self.0 * 1.94384
+    }
+}
 
 /// Template information
 #[derive(Debug)]
 pub struct ShipTemplate {
     pub id: ShipTemplateId,
     pub ship_class: ShipClass,
-    pub max_speed: f32,
+    pub hull: Hull,
+    pub max_speed: Speed,
     pub max_health: f64,
     pub detection: f32,
     pub turrets: Vec<Turret>,
@@ -110,13 +136,93 @@ pub enum ShipClass {
     Destroyer,
 }
 
+/// * https://naval-encyclopedia.com/ww2
+/// * https://archive.org/details/ship-design-drawings
+#[derive(Debug)]
+pub struct Hull {
+    /// Overall length (o/a or "length overall")
+    pub length: f32,
+    /// The beam of the hull
+    pub width: f32,
+    /// Height of the hull above the water
+    pub freeboard: f32,
+    /// Height of the hull below the wayer
+    pub draft: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum HullLocationAxis {
+    Centered,
+    /// Distance from the back of right of the ship,
+    /// offset by the center of this axis
+    FromCenter(f32),
+    /// Distance from the back or right of the ship
+    FromMin(f32),
+    /// Distance from the front or left of the ship
+    FromMax(f32),
+}
+
+impl HullLocationAxis {
+    /// Returns the offset on this axis relative to the center of the hull
+    fn with_hull_axis(self, hull_length: f32) -> f32 {
+        match self {
+            HullLocationAxis::Centered => 0.,
+            HullLocationAxis::FromCenter(x) => x,
+            HullLocationAxis::FromMin(x) => x - 0.5 * hull_length,
+            HullLocationAxis::FromMax(x) => hull_length - x,
+        }
+    }
+}
+
+/// The 2d position of an item located on a ship's hull
+#[derive(Debug, Clone, Copy)]
+pub struct HullLocation {
+    /// Along the length of the ship, from back to front
+    pub l: HullLocationAxis,
+    /// Along the width of the ship, from right to left
+    pub w: HullLocationAxis,
+}
+
+impl HullLocation {
+    pub fn centered() -> Self {
+        Self {
+            l: HullLocationAxis::Centered,
+            w: HullLocationAxis::Centered,
+        }
+    }
+
+    pub fn new(l: HullLocationAxis, w: HullLocationAxis) -> Self {
+        Self { l, w }
+    }
+
+    /// `w` will be `Centered`
+    pub fn new_l(l: HullLocationAxis) -> Self {
+        Self {
+            l,
+            w: HullLocationAxis::Centered,
+        }
+    }
+
+    fn to_offset(&self, hull: &Hull) -> Vec2 {
+        vec2(
+            self.l.with_hull_axis(hull.length),
+            self.w.with_hull_axis(hull.width),
+        )
+    }
+    pub fn to_absolute(&self, hull: &Hull, ship_pos: Vec2, ship_rot: Quat) -> Vec2 {
+        let (z_rot, _, _) = ship_rot.to_euler(EulerRot::ZXY);
+        let rotated = Vec2::from_angle(z_rot).rotate(self.to_offset(hull));
+        ship_pos + rotated
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Dispersion {
-    // Vertical radius of the dispersion elliptic cone
-    // The ellipse is drawn at 1 km
+    /// Vertical radius of the dispersion elliptic cone.
+    /// The ellipse is drawn at 1 km
     pub vertical: f32,
-    // Horizontal radius of the dispersion elliptic cone
-    // The ellipse is drawn at 1 km
+    /// Horizontal radius of the dispersion elliptic cone.
+    /// The ellipse is drawn at 1 km
     pub horizontal: f32,
     pub sigma: f32,
 }
@@ -132,15 +238,22 @@ pub struct Turret {
     /// The dispersion per km of shell distance
     pub dispersion: Dispersion,
     /// The list of barrel positions on the turret
-    pub barrels: Vec<Vec2>,
-    // /// Rotation around the z axis
-    // pub rotation: f32,
-    pub location_on_ship: Vec2,
+    pub barrel_count: u8,
+    /// The distance between adjacent barrels on the turret
+    pub barrel_spacing: f32,
+    pub location_on_ship: HullLocation,
 }
 
 impl Turret {
-    pub fn with_location(mut self, location_on_ship: Vec2) -> Self {
+    pub fn with_location(mut self, location_on_ship: HullLocation) -> Self {
         self.location_on_ship = location_on_ship;
         self
+    }
+
+    pub fn with_locations(self, locations: impl IntoIterator<Item = HullLocation>) -> Vec<Self> {
+        locations
+            .into_iter()
+            .map(|loc| self.clone().with_location(loc))
+            .collect()
     }
 }

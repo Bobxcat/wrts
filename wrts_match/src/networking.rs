@@ -50,7 +50,7 @@ fn stdout_handler(rx: Receiver<WrtsMatchMessage>) {
         match rx.recv() {
             Ok(msg) => {
                 match &msg.msg {
-                    Message::Match2Client(Match2Client::SetEntityPos { .. }) => {
+                    Message::Match2Client(Match2Client::SetEntityTrans { .. }) => {
                         trace!("Sending: {msg:?}")
                     }
                     _ => info!("Sending: {msg:?}"),
@@ -345,9 +345,10 @@ fn send_transform_updates(
         for cl in clients_to_update {
             msgs_tx.send(WrtsMatchMessage {
                 client: cl,
-                msg: Message::Match2Client(Match2Client::SetEntityPos {
+                msg: Message::Match2Client(Match2Client::SetEntityTrans {
                     id: shared,
                     pos: trans.translation,
+                    rot: trans.rotation,
                 }),
             });
         }

@@ -1,31 +1,39 @@
 use crate::ship_template::*;
 
 impl ShipTemplate {
+    /// https://en.wikipedia.org/wiki/Kiev-class_destroyer
     pub(super) fn kiev() -> ShipTemplate {
-        todo!();
         let main_battery_prefab = Turret {
-            reload_secs: 4.,
+            reload_secs: 5.,
             damage: 10.,
             muzzle_vel: 850.,
-            max_range: 10100.,
+            max_range: 11140.,
             dispersion: Dispersion {
                 vertical: 3.5,
-                horizontal: 9.,
+                horizontal: 8.8,
                 sigma: 2.0,
             },
-            barrels: vec![vec2(1., 0.2), vec2(1., -0.2)],
-            location_on_ship: Vec2::ZERO,
+            barrel_count: 2,
+            barrel_spacing: 1.,
+            location_on_ship: HullLocation::centered(),
         };
         ShipTemplate {
-            id: ShipTemplateId::oland(),
+            id: ShipTemplateId::kiev(),
             ship_class: ShipClass::Destroyer,
-            max_speed: 35. * SHIP_SPEED_SCALE,
-            max_health: 20_000.,
-            detection: 7200.,
-            turrets: vec![
-                main_battery_prefab.clone().with_location(vec2(5., 0.)),
-                main_battery_prefab.clone().with_location(vec2(-5., 0.)),
-            ],
+            hull: Hull {
+                length: 127.8,
+                width: 11.7,
+                freeboard: 5.,
+                draft: 4.2,
+            },
+            max_speed: Speed::from_kts(42.5 * SHIP_SPEED_SCALE),
+            max_health: 17500.,
+            detection: 8540.,
+            turrets: main_battery_prefab.with_locations([
+                HullLocation::new_l(HullLocationAxis::FromCenter(50.)),
+                HullLocation::new_l(HullLocationAxis::FromCenter(40.)),
+                HullLocation::new_l(HullLocationAxis::FromCenter(-50.)),
+            ]),
         }
     }
 }

@@ -86,9 +86,10 @@ pub enum Match2Client {
         pos: Vec3,
         rot: Quat,
     },
-    SetEntityPos {
+    SetEntityTrans {
         id: SharedEntityId,
         pos: Vec3,
+        rot: Quat,
     },
     SetMoveOrder {
         id: SharedEntityId,

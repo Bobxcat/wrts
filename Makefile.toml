@@ -20,7 +20,7 @@ echo IS_PROD: ${IS_PROD}
 
 [tasks.build]
 command = "cargo"
-args = ["build"]
+args = ["build", "--profile", "${BUILD_PROFILE_TEXT}"]
 
 [tasks.client]
 command = "cargo"

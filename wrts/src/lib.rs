@@ -243,7 +243,7 @@ fn update_bullet_displays(
         let double_height = 1000.;
         let height_scaling = 1. + trans.translation.z.clamp(0., 20_000.) / double_height;
         sprite.custom_size =
-            Some(vec2(0.5, 2.) * height_scaling * settings.bullet_icon_scale * zoom.0);
+            Some(vec2(2., 0.5) * height_scaling * settings.bullet_icon_scale * zoom.0);
     }
 }
 
@@ -304,7 +304,15 @@ fn update_ship_displays(
 ) {
     for (ship, mut sprite, trans, team, selected, detection_status) in ships {
         let is_selected = selected.is_some();
-        let sprite_size = vec2(1., 1.) * settings.ship_icon_scale * zoom.0;
+        let sprite_size = {
+            let zoom_consistent_size = vec2(1., 1.) * settings.ship_icon_scale * zoom.0;
+            let real_size = vec2(ship.template.hull.length, ship.template.hull.width);
+            if zoom_consistent_size.length() > real_size.length() {
+                zoom_consistent_size
+            } else {
+                real_size
+            }
+        };
 
         if !team.is_this_client(*this_client) && !(*detection_status == DetectionStatus::Detected) {
             *sprite = Sprite::default();
