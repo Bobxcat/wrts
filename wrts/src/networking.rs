@@ -3,6 +3,10 @@ use std::{net::SocketAddr, str::FromStr};
 use crate::{AppState, PlayerSettings};
 use anyhow::{Result, anyhow};
 use bevy::{log::tracing::Instrument, prelude::*};
+use bevy_simple_text_input::{
+    TextInput, TextInputPlugin, TextInputSettings, TextInputTextColor, TextInputTextFont,
+    TextInputValue,
+};
 use tokio::sync::mpsc;
 use wrts_messaging::{Client2Lobby, ClientId, Lobby2Client, Message, RecvFromStream, SendToStream};
 use wtransport::{ClientConfig, Endpoint};
@@ -95,15 +99,16 @@ pub struct NetworkingPlugin;
 
 impl Plugin for NetworkingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            OnEnter(AppState::ConnectingToServer),
-            (setup_connecting_to_network_ui, clear_server_connection),
-        )
-        .add_systems(
-            Update,
-            (update_join_server_button, update_join_server_state_display)
-                .run_if(in_state(AppState::ConnectingToServer)),
-        );
+        app.add_plugins(TextInputPlugin)
+            .add_systems(
+                OnEnter(AppState::ConnectingToServer),
+                (setup_connecting_to_network_ui, clear_server_connection),
+            )
+            .add_systems(
+                Update,
+                (update_join_server_button, update_join_server_state_display)
+                    .run_if(in_state(AppState::ConnectingToServer)),
+            );
     }
 }
 
@@ -141,33 +146,41 @@ fn setup_connecting_to_network_ui(mut commands: Commands) {
             },
             children![
                 (
-                    JoinServerButton,
-                    Node {
-                        margin: UiRect::all(Val::Px(50.0)),
-                        ..default()
-                    },
-                    Text::new("Join Server!"),
-                    TextFont {
-                        font_size: 67.0,
-                        ..default()
-                    },
-                    TextColor(text_color),
-                    ImageNode::solid_color(Color::WHITE),
-                    Button,
-                ),
-                (
                     IPAddressField,
                     Node {
                         margin: UiRect::all(Val::Px(50.0)),
                         ..default()
                     },
-                    Text::new(format!("127.0.0.1:{}", wrts_messaging::DEFAULT_PORT)),
+                    BorderColor(Color::linear_rgb(0.75, 0.52, 0.99)),
+                    BackgroundColor(Color::linear_rgb(0.15, 0.15, 0.15)),
+                    TextInput,
+                    TextInputTextFont(TextFont {
+                        font_size: 60.,
+                        ..default()
+                    }),
+                    TextInputTextColor(TextColor(Color::linear_rgb(0.9, 0.9, 0.9))),
+                    TextInputValue(format!("127.0.0.1:{}", wrts_messaging::DEFAULT_PORT)),
+                    TextInputSettings {
+                        retain_on_submit: true,
+                        ..default()
+                    }
+                ),
+                (
+                    JoinServerButton,
+                    Node {
+                        margin: UiRect::all(Val::Px(50.0)),
+                        ..default()
+                    },
+                    BorderColor(Color::linear_rgb(0.75, 0.52, 0.99)),
+                    BackgroundColor(Color::linear_rgb(0.15, 0.15, 0.15)),
+                    Text::new("Join Server!"),
                     TextFont {
-                        font_size: 67.0,
+                        font_size: 60.0,
                         ..default()
                     },
                     TextColor(text_color),
                     ImageNode::solid_color(Color::WHITE),
+                    Button,
                 ),
             ]
         ),],
@@ -177,7 +190,7 @@ fn setup_connecting_to_network_ui(mut commands: Commands) {
 fn update_join_server_button(
     mut commands: Commands,
     button: Query<&Interaction, (With<JoinServerButton>, Changed<Interaction>)>,
-    ip_address: Query<&Text, With<IPAddressField>>,
+    ip_address: Query<&TextInputValue, With<IPAddressField>>,
     settings: Res<PlayerSettings>,
     mut next_app_state: ResMut<NextState<AppState>>,
 ) {
@@ -185,7 +198,7 @@ fn update_join_server_button(
         assert!(button.is_empty());
         return;
     };
-    let ip_address = ip_address.single().unwrap();
+    let ip_address = &ip_address.single().unwrap().0;
     match button {
         Interaction::Pressed => {
             info!("JoinServerButton pressed, starting handshake");

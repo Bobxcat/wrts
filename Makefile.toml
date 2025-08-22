@@ -19,6 +19,7 @@ echo IS_PROD: ${IS_PROD}
 ''']
 
 [tasks.build]
+dependencies = ["build_match_copy_artifacts"]
 command = "cargo"
 args = ["build", "--profile", "${BUILD_PROFILE_TEXT}"]
 

@@ -20,6 +20,7 @@ anyhow = "1.0.99"
 slotmap = "1.0.7"
 tokio = { version = "1.47.1", features = ["rt", "sync"] }
 num-complex = "0.4.6"
+bevy_simple_text_input = "0.11.1"
 
 [[bench]]
 name = "bench"
