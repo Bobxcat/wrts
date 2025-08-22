@@ -106,8 +106,7 @@ impl Plugin for NetworkingPlugin {
             )
             .add_systems(
                 Update,
-                (update_join_server_button, update_join_server_state_display)
-                    .run_if(in_state(AppState::ConnectingToServer)),
+                (update_join_server_button,).run_if(in_state(AppState::ConnectingToServer)),
             );
     }
 }
@@ -121,9 +120,6 @@ struct IPAddressField;
 
 #[derive(Component, Debug, Clone, Copy)]
 struct JoinServerButton;
-
-#[derive(Component, Debug, Clone, Copy)]
-struct JoinStateDisplay;
 
 fn setup_connecting_to_network_ui(mut commands: Commands) {
     let text_color = Color::linear_rgb(0.2, 0.4, 0.4);
@@ -245,11 +241,6 @@ fn update_join_server_button(
         }
         _ => (),
     }
-}
-
-fn update_join_server_state_display(mut display: Query<&mut Text, With<JoinStateDisplay>>) {
-    // let _display = display.single_mut().unwrap();
-    //
 }
 
 struct NetworkStartInfo {
