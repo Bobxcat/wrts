@@ -6,11 +6,19 @@ use crate::{Health, Team, Velocity};
 
 const SHIP_SPEED_SCALE: f32 = 5.2;
 
+#[derive(Debug, Clone)]
+pub struct TurretState {
+    pub dir: f32,
+    pub reload_timer: Timer,
+}
+
 #[derive(Debug, Component, Clone)]
 #[require(Team, Health, Transform, Velocity)]
 pub struct Ship {
     pub template: &'static ShipTemplate,
-    pub turret_reload_timers: Vec<Timer>,
+    pub turret_states: Vec<TurretState>,
+    pub curr_rudder: f32,
+    pub curr_speed: f32,
 }
 
 pub fn apply_dispersion(dispersion: &Dispersion, nominal_direction: Vec3) -> Vec3 {

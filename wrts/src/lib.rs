@@ -17,12 +17,13 @@ use bevy::{
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
+use wrts_match_shared::{ShipPathBezier, ShipPathCatmull};
 use wrts_messaging::{Client2Match, ClientId, Message};
 
 use crate::{
     in_match::{InMatchPlugin, SharedEntityTracking},
     networking::{NetworkingPlugin, ServerConnection, ThisClient},
-    ship::Ship,
+    ship::{Ship, TurretState},
     ui::{
         in_game::InGameUIPlugin,
         lobby::LobbyUiPlugin,
@@ -310,17 +311,38 @@ fn update_ship_displays(
     settings: Res<PlayerSettings>,
     zoom: Res<MapZoom>,
 ) {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum DisplayType {
+        Accurate,
+        Simplified,
+    }
     for (team, ship, mut sprite, trans, selected, detection_status, health) in ships {
+        let is_visible =
+            team.is_this_client(*this_client) || *detection_status == DetectionStatus::Detected;
         let is_selected = selected.is_some();
-        let sprite_size = {
-            let zoom_consistent_size = vec2(1., 1.) * settings.ship_icon_scale * zoom.0;
-            let real_size = vec2(ship.template.hull.length, ship.template.hull.width);
-            if zoom_consistent_size.max_element() > real_size.max_element() {
-                zoom_consistent_size
+
+        let (display_type, sprite_size) = {
+            let simplified_size = vec2(1., 1.) * settings.ship_icon_scale * zoom.0;
+            let accurate_size = vec2(ship.template.hull.length, ship.template.hull.width);
+            if simplified_size.max_element() > accurate_size.max_element() {
+                (DisplayType::Simplified, simplified_size)
             } else {
-                real_size
+                (DisplayType::Accurate, accurate_size)
             }
         };
+
+        // Turrets
+        if is_visible && display_type == DisplayType::Accurate {
+            let turrets = ship.template.turret_instances.as_slice();
+            for turret_idx in 0..turrets.len() {
+                let &TurretState { dir: dir_relative } = &ship.turret_states[turret_idx];
+                let dir_absolute = trans.rotation.to_euler(EulerRot::ZXY).0 + dir_relative;
+                let pos =
+                    turrets[turret_idx].absolute_pos(trans.translation.truncate(), trans.rotation);
+                let delta = Vec2::from_angle(dir_absolute) * 30.;
+                gizmos.arrow_2d(pos, pos + delta, Color::linear_rgb(0.8, 0.8, 0.8));
+            }
+        }
 
         // HP bar
         if *detection_status != DetectionStatus::Never {
@@ -363,12 +385,12 @@ fn update_ship_displays(
             );
         }
 
-        if team.is_this_client(*this_client) || *detection_status == DetectionStatus::Detected {
+        if is_visible {
             // Gun range circle
             if let Some(t) = ship
                 .template
-                .turrets
-                .iter()
+                .turret_templates
+                .values()
                 .max_by_key(|t| OrderedFloat(t.max_range))
             {
                 gizmos
@@ -426,14 +448,42 @@ fn update_selected_ship_orders_display(
                 .resolution(10);
         }
 
-        if let Some(move_order) = selected_move_order {
-            if !move_order.waypoints.is_empty() {
-                gizmos.linestrip_2d(
-                    std::iter::once(selected_trans.translation.truncate())
-                        .chain(move_order.waypoints.iter().copied()),
-                    Color::WHITE,
-                );
+        if let Some(move_order) = selected_move_order
+            && !move_order.waypoints.is_empty()
+        {
+            for &pt in &move_order.waypoints {
+                gizmos.circle_2d(Isometry2d::from_translation(pt), 5. * zoom.0, Color::WHITE);
             }
+
+            // Bezier
+            let path = ShipPathBezier::new(
+                selected_trans.translation.truncate(),
+                Vec2::from_angle(selected_trans.rotation.to_euler(EulerRot::ZXY).0),
+                move_order.waypoints.clone(),
+            );
+            let mut pts = vec![];
+            let samples = 256;
+            for i in 0..samples {
+                let t = i as f32 / samples as f32;
+                pts.push(path.sample(t));
+            }
+
+            gizmos.linestrip_2d(pts, Color::WHITE);
+
+            // CATMULL
+            let path = ShipPathCatmull::new(
+                selected_trans.translation.truncate(),
+                Vec2::from_angle(selected_trans.rotation.to_euler(EulerRot::ZXY).0),
+                move_order.waypoints.clone(),
+            );
+            let mut pts = vec![];
+            let samples = 256;
+            for i in 0..samples {
+                let t = i as f32 / samples as f32;
+                pts.push(path.sample(t));
+            }
+
+            gizmos.linestrip_2d(pts, Color::linear_rgb(1., 0.2, 0.2));
         }
     }
 }
@@ -443,7 +493,7 @@ fn update_selected_ship_orders(
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mouse_pos: Res<CursorWorldPos>,
-    all_ships: Query<(Entity, &Transform, &Team), With<Ship>>,
+    all_ships: Query<(Entity, &Transform, &Team, &DetectionStatus), With<Ship>>,
     mut ships_selected: Query<(
         Entity,
         &Transform,
@@ -466,6 +516,7 @@ fn update_selected_ship_orders(
         {
             if let Some(new_targ) = all_ships.iter().find(|maybe_targ| {
                 !maybe_targ.2.is_this_client(*this_client)
+                    && *maybe_targ.3 != DetectionStatus::Never
                     && maybe_targ.1.translation.truncate().distance(mouse_pos.0)
                         <= SHIP_SELECTION_SIZE * zoom.0
             }) {

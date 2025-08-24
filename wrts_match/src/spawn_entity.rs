@@ -9,7 +9,7 @@ use crate::{
     Bullet, Health, Team, Velocity,
     detection::{BaseDetection, CanDetect, DetectionStatus},
     networking::{ClientInfo, MessagesSend, SharedEntityTracking},
-    ship::Ship,
+    ship::{Ship, TurretState},
 };
 
 pub struct DespawnNetworkedEntityCommand {
@@ -54,11 +54,19 @@ impl Command for SpawnShipCommand {
                 .spawn((
                     Ship {
                         template,
-                        turret_reload_timers: template
-                            .turrets
+                        turret_states: template
+                            .turret_instances
                             .iter()
-                            .map(|t| Timer::from_seconds(t.reload_secs, TimerMode::Repeating))
+                            .map(|t| TurretState {
+                                dir: t.default_dir,
+                                reload_timer: Timer::from_seconds(
+                                    t.turret_template().reload_secs,
+                                    TimerMode::Repeating,
+                                ),
+                            })
                             .collect_vec(),
+                        curr_rudder: 0.,
+                        curr_speed: 0.,
                     },
                     BaseDetection(template.detection),
                     DetectionStatus {
@@ -83,6 +91,13 @@ impl Command for SpawnShipCommand {
         let mut clients = world.query::<&ClientInfo>();
         let msgs_tx = world.get_resource::<MessagesSend>().unwrap();
         for cl in clients.iter(world) {
+            let turret_rots = self
+                .ship_base
+                .to_template()
+                .turret_instances
+                .iter()
+                .map(|instance| instance.default_dir)
+                .collect_vec();
             msgs_tx.send(WrtsMatchMessage {
                 client: cl.info.id,
                 msg: Message::Match2Client(Match2Client::SpawnShip {
@@ -92,6 +107,7 @@ impl Command for SpawnShipCommand {
                     health: self.health.0,
                     pos: self.pos,
                     rot: self.rot,
+                    turret_rots,
                 }),
             });
         }

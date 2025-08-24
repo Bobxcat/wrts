@@ -1,9 +1,12 @@
+use std::f32::consts::PI;
+
 use crate::ship_template::*;
 
 impl ShipTemplate {
     /// https://en.wikipedia.org/wiki/HSwMS_%C3%96land_(J16)
     pub(super) fn oland() -> ShipTemplate {
-        let main_battery_prefab = Turret {
+        let mut turret_templates = SlotMap::default();
+        let main_battery = turret_templates.insert(TurretTemplate {
             reload_secs: 2.3,
             damage: 150.,
             muzzle_vel: 850.,
@@ -15,8 +18,7 @@ impl ShipTemplate {
             },
             barrel_count: 2,
             barrel_spacing: 1.,
-            location_on_ship: HullLocation::centered(),
-        };
+        });
         ShipTemplate {
             id: ShipTemplateId::oland(),
             ship_class: ShipClass::Destroyer,
@@ -27,12 +29,25 @@ impl ShipTemplate {
                 draft: 3.4,
             },
             max_speed: Speed::from_kts(35. * SHIP_SPEED_SCALE),
+            engine_acceleration: Speed::from_kts(5. * SHIP_SPEED_SCALE),
+            rudder_acceleration: 0.4,
             max_health: 14_100.,
             detection: 7_200.,
-            turrets: main_battery_prefab.with_locations([
-                HullLocation::new_l(HullLocationAxis::FromCenter(40.)),
-                HullLocation::new_l(HullLocationAxis::FromCenter(-40.)),
-            ]),
+            turret_templates,
+            turret_instances: vec![
+                TurretInstance {
+                    ship_template: ShipTemplateId::oland(),
+                    template: main_battery,
+                    location_on_ship: HullLocation::new_l(HullLocationAxis::FromCenter(40.)),
+                    default_dir: 0.,
+                },
+                TurretInstance {
+                    ship_template: ShipTemplateId::oland(),
+                    template: main_battery,
+                    location_on_ship: HullLocation::new_l(HullLocationAxis::FromCenter(-40.)),
+                    default_dir: PI,
+                },
+            ],
         }
     }
 }

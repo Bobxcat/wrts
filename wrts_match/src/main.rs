@@ -104,13 +104,14 @@ struct FireTarget {
 
 fn update_ship_velocity(
     ships: Query<(
-        &Ship,
+        &mut Ship,
         &mut Transform,
         &mut Velocity,
         Option<&mut MoveOrder>,
         &Team,
         Entity,
     )>,
+    time: Res<Time>,
     shared_entities: Res<SharedEntityTracking>,
     msgs_tx: Res<MessagesSend>,
 ) {
@@ -133,15 +134,55 @@ fn update_ship_velocity(
                 }
             }
         }
-        let new_vel = ship
+
+        let curr_dir = ship.1.rotation.to_euler(EulerRot::ZXY).0;
+
+        let (targ_speed, targ_dir) = match ship
             .3
             .and_then(|order| order.waypoints.get(0).copied())
-            .and_then(|next_waypoint| Dir2::new(next_waypoint - ship.1.translation.truncate()).ok())
-            .map(|dir| {
-                ship.1.rotation = Quat::from_rotation_z(dir.to_angle());
-                dir * ship.0.template.max_speed.mps()
-            })
-            .unwrap_or(Vec2::ZERO);
+            .and_then(|next_waypoint| {
+                Some((
+                    next_waypoint,
+                    Dir2::new(next_waypoint - ship.1.translation.truncate()).ok()?,
+                ))
+            }) {
+            Some((next_waypoint, to_next_waypoint)) => {
+                let dist = ship.1.translation.truncate().distance(next_waypoint);
+                let targ_speed = ship.0.template.max_speed.mps().clamp(0., dist);
+                let targ_dir = to_next_waypoint.to_angle();
+                (targ_speed, targ_dir)
+            }
+            None => (0., curr_dir),
+        };
+
+        let new_vel = {
+            let targ_rudder = f32::clamp(
+                (targ_dir - curr_dir) * ship.0.template.rudder_acceleration.powi(2),
+                -1.,
+                1.,
+            );
+            ship.0.curr_rudder = f32::clamp(
+                ship.0.curr_rudder
+                    + time.delta_secs()
+                        * (targ_rudder - ship.0.curr_rudder)
+                        * ship.0.template.rudder_acceleration,
+                -1.,
+                1.,
+            );
+            let new_dir = curr_dir + ship.0.curr_rudder * time.delta_secs();
+            ship.0.curr_speed = f32::clamp(
+                ship.0.curr_speed
+                    + time.delta_secs()
+                        * (targ_speed - ship.0.curr_speed)
+                        * ship.0.template.engine_acceleration.mps(),
+                0.,
+                ship.0.template.max_speed.mps(),
+            );
+
+            Vec2::from_angle(new_dir) * ship.0.curr_speed
+        };
+
+        ship.1.rotation = Quat::from_rotation_z(new_vel.to_angle());
         ship.2.0 = new_vel.extend(0.);
     }
 }
@@ -292,7 +333,11 @@ fn fire_bullets(
         .into_iter()
         .flat_map(|team| (0..ships_by_team[team].len()).map(move |idx| (team, idx)))
         .flat_map(|(team, ship_idx)| {
-            (0..ships_by_team[team][ship_idx].2.template.turrets.len())
+            (0..ships_by_team[team][ship_idx]
+                .2
+                .template
+                .turret_instances
+                .len())
                 .map(move |turret_idx| (team, ship_idx, turret_idx))
         })
         .collect_vec()
@@ -311,7 +356,7 @@ fn fire_bullets(
 
             let Some((targ, _, _, targ_trans, targ_vel, _, _)) = targ else {
                 let turret_timer =
-                    &mut ships_by_team[team][ship_idx].2.turret_reload_timers[turret_idx];
+                    &mut ships_by_team[team][ship_idx].2.turret_states[turret_idx].reload_timer;
                 if !turret_timer.finished() {
                     turret_timer.tick(time.delta());
                 }
@@ -324,16 +369,18 @@ fn fire_bullets(
             let x = &mut ships_by_team[team][ship_idx];
             (x.0, &mut x.2, *x.3)
         };
-        let turret = &ship.template.turrets[turret_idx];
+        let turret_instance = &ship.template.turret_instances[turret_idx];
+        let turret_template = turret_instance.turret_template();
 
-        let turret_pos = turret.location_on_ship.to_absolute(
+        let turret_pos = turret_instance.location_on_ship.to_absolute(
             &ship.template.hull,
             ship_trans.translation.truncate(),
             ship_trans.rotation,
         );
         let targ_pos = targ_trans.translation.truncate();
 
-        let turret_reload_timer = &mut ship.turret_reload_timers[turret_idx];
+        let turret_state = &mut ship.turret_states[turret_idx];
+        let turret_reload_timer = &mut turret_state.reload_timer;
 
         let Some(BulletProblemRes {
             intersection_point,
@@ -346,10 +393,10 @@ fn fire_bullets(
             turret_pos,
             targ_pos,
             targ_vel.0.truncate(),
-            turret.muzzle_vel as f64,
+            turret_template.muzzle_vel as f64,
             rules.gravity as f64,
         )
-        .filter(|bp| bp.intersection_dist < turret.max_range)
+        .filter(|bp| bp.intersection_dist < turret_template.max_range)
         else {
             if !turret_reload_timer.finished() {
                 turret_reload_timer.tick(time.delta());
@@ -357,13 +404,16 @@ fn fire_bullets(
             continue;
         };
 
-        for _ in 0..turret_reload_timer.times_finished_this_tick() {
-            for barrel_idx in 0..turret.barrel_count {
-                let barrel_lateral_offset =
-                    (barrel_idx - (turret.barrel_count - 1) / 2) as f32 * turret.barrel_spacing;
+        turret_state.dir = bullet_azimuth - ship_trans.rotation.to_euler(EulerRot::ZYX).0;
 
-                let bullet_vel =
-                    apply_dispersion(&turret.dispersion, bullet_dir) * turret.muzzle_vel as f32;
+        for _ in 0..turret_reload_timer.times_finished_this_tick() {
+            for barrel_idx in 0..turret_template.barrel_count {
+                let barrel_lateral_offset = (barrel_idx - (turret_template.barrel_count - 1) / 2)
+                    as f32
+                    * turret_template.barrel_spacing;
+
+                let bullet_vel = apply_dispersion(&turret_template.dispersion, bullet_dir)
+                    * turret_template.muzzle_vel as f32;
 
                 let bullet_start = turret_pos
                     + Vec2::from_angle(bullet_azimuth).rotate(vec2(0., barrel_lateral_offset));
@@ -381,7 +431,7 @@ fn fire_bullets(
                     current_aimpoint: intersection_point,
                     expected_flight_time_total: Duration::from_secs_f32(intersection_time),
                     current_flight_time: Duration::ZERO,
-                    damage: turret.damage,
+                    damage: turret_template.damage,
                 };
 
                 commands.queue(SpawnBulletCommand {

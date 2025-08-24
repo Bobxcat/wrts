@@ -1,9 +1,12 @@
+use std::f32::consts::PI;
+
 use crate::ship_template::*;
 
 impl ShipTemplate {
     /// https://en.wikipedia.org/wiki/Kiev-class_destroyer
     pub(super) fn kiev() -> ShipTemplate {
-        let main_battery_prefab = Turret {
+        let mut turret_templates = SlotMap::default();
+        let main_battery = turret_templates.insert(TurretTemplate {
             reload_secs: 5.,
             damage: 200.,
             muzzle_vel: 850.,
@@ -15,8 +18,7 @@ impl ShipTemplate {
             },
             barrel_count: 2,
             barrel_spacing: 1.,
-            location_on_ship: HullLocation::centered(),
-        };
+        });
         ShipTemplate {
             id: ShipTemplateId::kiev(),
             ship_class: ShipClass::Destroyer,
@@ -27,13 +29,31 @@ impl ShipTemplate {
                 draft: 4.2,
             },
             max_speed: Speed::from_kts(42.5 * SHIP_SPEED_SCALE),
+            engine_acceleration: Speed::from_kts(8. * SHIP_SPEED_SCALE),
+            rudder_acceleration: 0.3,
             max_health: 17_500.,
             detection: 8_540.,
-            turrets: main_battery_prefab.with_locations([
-                HullLocation::new_l(HullLocationAxis::FromCenter(50.)),
-                HullLocation::new_l(HullLocationAxis::FromCenter(40.)),
-                HullLocation::new_l(HullLocationAxis::FromCenter(-50.)),
-            ]),
+            turret_templates,
+            turret_instances: vec![
+                TurretInstance {
+                    ship_template: ShipTemplateId::kiev(),
+                    template: main_battery,
+                    location_on_ship: HullLocation::new_l(HullLocationAxis::FromCenter(50.)),
+                    default_dir: 0.,
+                },
+                TurretInstance {
+                    ship_template: ShipTemplateId::kiev(),
+                    template: main_battery,
+                    location_on_ship: HullLocation::new_l(HullLocationAxis::FromCenter(40.)),
+                    default_dir: 0.,
+                },
+                TurretInstance {
+                    ship_template: ShipTemplateId::kiev(),
+                    template: main_battery,
+                    location_on_ship: HullLocation::new_l(HullLocationAxis::FromCenter(-50.)),
+                    default_dir: PI,
+                },
+            ],
         }
     }
 }

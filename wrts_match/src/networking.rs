@@ -21,7 +21,12 @@ impl Plugin for NetworkingPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(PreStartup, network_handshake).add_systems(
             FixedUpdate,
-            (read_messages, send_transform_updates, send_health_updates),
+            (
+                read_messages,
+                send_transform_updates,
+                send_turret_state_updates,
+                send_health_updates,
+            ),
         );
     }
 }
@@ -353,6 +358,33 @@ fn send_transform_updates(
                     rot: trans.rotation,
                 }),
             });
+        }
+    }
+}
+
+fn send_turret_state_updates(
+    ships: Query<(Entity, &Ship)>,
+    clients: Query<&ClientInfo>,
+    msgs_tx: Res<MessagesSend>,
+    shared_entities: Res<SharedEntityTracking>,
+) {
+    let clients = clients.iter().map(|cl| cl.info.id).collect_vec();
+    for (local, ship) in ships {
+        let Some(shared) = shared_entities.get_by_local(local) else {
+            continue;
+        };
+        for cl in clients.clone() {
+            msgs_tx.send(WrtsMatchMessage {
+                client: cl,
+                msg: Message::Match2Client(Match2Client::SetTurretDirs {
+                    id: shared,
+                    turret_dirs: ship
+                        .turret_states
+                        .iter()
+                        .map(|state| state.dir)
+                        .collect_vec(),
+                }),
+            })
         }
     }
 }

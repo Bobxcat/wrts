@@ -7,8 +7,15 @@ use crate::{Health, Team};
 
 const SHIP_SPEED_SCALE: f32 = 5.2;
 
+#[derive(Debug)]
+pub struct TurretState {
+    /// Relative to ship-space
+    pub dir: f32,
+}
+
 #[derive(Debug, Component)]
 #[require(Health, Sprite, Transform)]
 pub struct Ship {
     pub template: &'static ShipTemplate,
+    pub turret_states: Vec<TurretState>,
 }

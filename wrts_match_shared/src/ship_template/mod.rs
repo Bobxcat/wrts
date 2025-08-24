@@ -5,6 +5,7 @@ mod sweden;
 use glam::{EulerRot, Quat, Vec2, vec2};
 use paste::paste;
 use serde::{Deserialize, Serialize};
+use slotmap::SlotMap;
 
 const SHIP_SPEED_SCALE: f32 = 5.2;
 
@@ -40,9 +41,13 @@ pub struct ShipTemplate {
     pub ship_class: ShipClass,
     pub hull: Hull,
     pub max_speed: Speed,
+    /// Speed gained per second
+    pub engine_acceleration: Speed,
+    pub rudder_acceleration: f32,
     pub max_health: f64,
     pub detection: f32,
-    pub turrets: Vec<Turret>,
+    pub turret_templates: SlotMap<TurretTemplateId, TurretTemplate>,
+    pub turret_instances: Vec<TurretInstance>,
 }
 
 /// A unique numerical identifier for each ship template,
@@ -227,8 +232,12 @@ pub struct Dispersion {
     pub sigma: f32,
 }
 
+slotmap::new_key_type! {
+    pub struct TurretTemplateId;
+}
+
 #[derive(Debug, Clone)]
-pub struct Turret {
+pub struct TurretTemplate {
     pub reload_secs: f32,
     pub damage: f64,
     pub muzzle_vel: f32,
@@ -241,19 +250,26 @@ pub struct Turret {
     pub barrel_count: u8,
     /// The distance between adjacent barrels on the turret
     pub barrel_spacing: f32,
-    pub location_on_ship: HullLocation,
 }
 
-impl Turret {
-    pub fn with_location(mut self, location_on_ship: HullLocation) -> Self {
-        self.location_on_ship = location_on_ship;
-        self
+#[derive(Debug)]
+pub struct TurretInstance {
+    pub ship_template: ShipTemplateId,
+    pub template: TurretTemplateId,
+    pub location_on_ship: HullLocation,
+    pub default_dir: f32,
+}
+
+impl TurretInstance {
+    pub fn turret_template(&self) -> &'static TurretTemplate {
+        &self.ship_template.to_template().turret_templates[self.template]
     }
 
-    pub fn with_locations(self, locations: impl IntoIterator<Item = HullLocation>) -> Vec<Self> {
-        locations
-            .into_iter()
-            .map(|loc| self.clone().with_location(loc))
-            .collect()
+    pub fn absolute_pos(&self, ship_pos: Vec2, ship_rot: Quat) -> Vec2 {
+        self.location_on_ship.to_absolute(
+            &self.ship_template.to_template().hull,
+            ship_pos,
+            ship_rot,
+        )
     }
 }

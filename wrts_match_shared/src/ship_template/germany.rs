@@ -1,9 +1,12 @@
+use std::f32::consts::PI;
+
 use crate::ship_template::*;
 
 impl ShipTemplate {
     /// https://archive.org/details/yn509bogp193x
     pub(super) fn bismarck() -> ShipTemplate {
-        let main_battery_prefab = Turret {
+        let mut turret_templates = SlotMap::default();
+        let main_battery = turret_templates.insert(TurretTemplate {
             reload_secs: 26.,
             damage: 1000.,
             muzzle_vel: 820.,
@@ -15,8 +18,7 @@ impl ShipTemplate {
             },
             barrel_count: 2,
             barrel_spacing: 1.,
-            location_on_ship: HullLocation::centered(),
-        };
+        });
         ShipTemplate {
             id: ShipTemplateId::bismarck(),
             ship_class: ShipClass::Battleship,
@@ -27,14 +29,37 @@ impl ShipTemplate {
                 draft: 9.3,
             },
             max_speed: Speed::from_kts(31. * SHIP_SPEED_SCALE),
+            engine_acceleration: Speed::from_kts(3. * SHIP_SPEED_SCALE),
+            rudder_acceleration: 0.1,
             max_health: 60_000.,
             detection: 15_900.,
-            turrets: main_battery_prefab.with_locations([
-                HullLocation::new_l(HullLocationAxis::FromMin(46.15)),
-                HullLocation::new_l(HullLocationAxis::FromMin(64.35)),
-                HullLocation::new_l(HullLocationAxis::FromMin(174.35)),
-                HullLocation::new_l(HullLocationAxis::FromMin(192.55)),
-            ]),
+            turret_templates,
+            turret_instances: vec![
+                TurretInstance {
+                    ship_template: ShipTemplateId::bismarck(),
+                    template: main_battery,
+                    location_on_ship: HullLocation::new_l(HullLocationAxis::FromMin(46.15)),
+                    default_dir: 0.,
+                },
+                TurretInstance {
+                    ship_template: ShipTemplateId::bismarck(),
+                    template: main_battery,
+                    location_on_ship: HullLocation::new_l(HullLocationAxis::FromMin(64.35)),
+                    default_dir: 0.,
+                },
+                TurretInstance {
+                    ship_template: ShipTemplateId::bismarck(),
+                    template: main_battery,
+                    location_on_ship: HullLocation::new_l(HullLocationAxis::FromMin(174.35)),
+                    default_dir: PI,
+                },
+                TurretInstance {
+                    ship_template: ShipTemplateId::bismarck(),
+                    template: main_battery,
+                    location_on_ship: HullLocation::new_l(HullLocationAxis::FromMin(192.55)),
+                    default_dir: PI,
+                },
+            ],
         }
     }
 }

@@ -7,12 +7,13 @@ use bevy::{
     },
     prelude::*,
 };
+use itertools::Itertools;
 use wrts_messaging::{Client2Match, ClientSharedInfo, Match2Client, Message, SharedEntityId};
 
 use crate::{
     AppState, Bullet, DetectionStatus, Health, MoveOrder, PlayerSettings, Team,
     networking::{ClientInfo, ServerConnection, ThisClient},
-    ship::Ship,
+    ship::{Ship, TurretState},
 };
 
 pub use shared_entity_tracking::SharedEntityTracking;
@@ -186,12 +187,24 @@ fn in_match_networking(
                 health,
                 pos,
                 rot,
+                turret_rots,
             }) => {
+                let turret_states = {
+                    let turret_instances = &ship_base.to_template().turret_instances;
+                    let mut turret_states = vec![];
+                    for turret_idx in 0..turret_instances.len() {
+                        turret_states.push(TurretState {
+                            dir: turret_rots[turret_idx],
+                        });
+                    }
+                    turret_states
+                };
                 let local = commands
                     .spawn((
                         StateScoped(AppState::InMatch),
                         Ship {
                             template: ship_base.to_template(),
+                            turret_states,
                         },
                         DetectionStatus::Never,
                         Team(team),
@@ -240,6 +253,20 @@ fn in_match_networking(
                     let mut trans = entity.get_mut::<Transform>().unwrap();
                     trans.translation = pos;
                     trans.rotation = rot;
+                });
+            }
+            Message::Match2Client(Match2Client::SetTurretDirs { id, turret_dirs }) => {
+                commands.queue(move |world: &mut World| {
+                    let Some(local) = world.resource::<SharedEntityTracking>().get_by_shared(id)
+                    else {
+                        return;
+                    };
+
+                    let mut entity = world.entity_mut(local);
+                    let mut ship = entity.get_mut::<Ship>().unwrap();
+                    for turret_idx in 0..turret_dirs.len() {
+                        ship.turret_states[turret_idx].dir = turret_dirs[turret_idx];
+                    }
                 });
             }
             Message::Match2Client(Match2Client::SetHealth {

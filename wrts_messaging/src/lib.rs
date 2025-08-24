@@ -77,6 +77,7 @@ pub enum Match2Client {
         health: f64,
         pos: Vec2,
         rot: Quat,
+        turret_rots: Vec<f32>,
     },
     SpawnBullet {
         id: SharedEntityId,
@@ -90,6 +91,10 @@ pub enum Match2Client {
         id: SharedEntityId,
         pos: Vec3,
         rot: Quat,
+    },
+    SetTurretDirs {
+        id: SharedEntityId,
+        turret_dirs: Vec<f32>,
     },
     SetHealth {
         id: SharedEntityId,

@@ -69,8 +69,8 @@ fn update_detection(
                 {
                     det = ship
                         .template
-                        .turrets
-                        .iter()
+                        .turret_templates
+                        .values()
                         .max_by_key(|t| OrderedFloat(t.max_range))
                         .unwrap()
                         .max_range;
