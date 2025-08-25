@@ -43,7 +43,10 @@ pub struct ShipTemplate {
     pub max_speed: Speed,
     /// Speed gained per second
     pub engine_acceleration: Speed,
-    pub rudder_acceleration: f32,
+    /// Max radians/sec of turning this boat
+    /// can perform
+    pub turning_rate: f32,
+    // pub rudder_acceleration: f32,
     pub max_health: f64,
     pub detection: f32,
     pub turret_templates: SlotMap<TurretTemplateId, TurretTemplate>,

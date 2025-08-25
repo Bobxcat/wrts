@@ -167,31 +167,53 @@ fn update_ship_velocity(
                 let curr_dir = Vec2::from_angle(curr_dir);
                 let targ_dir = Vec2::from_angle(targ_dir);
                 // let ship_dir_delta = curr_dir.angle_to(targ_dir) + PI;
-                let angle_change_if_started_slowing = ship.0.curr_rudder.powi(2)
-                    / ship.0.template.rudder_acceleration
-                    * ship.0.curr_rudder.signum();
+                let angle_change_if_started_slowing = ship.0.curr_rudder.signum()
+                    * ship.0.curr_rudder.powi(2)
+                    / ship.0.template.rudder_acceleration;
                 let angle_change_if_started_slowing =
                     Vec2::from_angle(angle_change_if_started_slowing);
+                let dir_if_started_slowing = curr_dir.rotate(angle_change_if_started_slowing);
 
-                let should_turn_left = targ_dir.to_angle() > curr_dir.to_angle();
+                // let should_turn_left = targ_dir.to_angle() > curr_dir.to_angle();
+                let should_turn_left = {
+                    // The angle will be +/- 180 degrees
+                    // If rotating from the curr_dir to the targ_dir requires
+                    // a positive rotation, then it's a left turn
+                    // Otherwise, it's a right turn
+                    curr_dir.angle_to(targ_dir).is_sign_positive()
+                };
 
                 let targ_rudder = if should_turn_left {
-                    if curr_dir.rotate(angle_change_if_started_slowing).to_angle()
-                        >= targ_dir.to_angle()
-                    {
+                    if math_utils::vector_is_within_swept_angle(
+                        targ_dir,
+                        curr_dir,
+                        dir_if_started_slowing,
+                    ) {
                         0.
                     } else {
                         1.
                     }
                 } else {
-                    if curr_dir.rotate(angle_change_if_started_slowing).to_angle()
-                        <= targ_dir.to_angle()
-                    {
+                    if math_utils::vector_is_within_swept_angle(
+                        targ_dir,
+                        dir_if_started_slowing,
+                        curr_dir,
+                    ) {
                         0.
                     } else {
                         -1.
                     }
                 };
+
+                // let targ_rudder = if math_utils::vector_is_within_swept_angle(
+                //     targ_dir,
+                //     curr_dir,
+                //     dir_if_started_slowing,
+                // ) {
+                //     0.
+                // } else {
+                //     if should_turn_left { 1. } else { -1. }
+                // };
 
                 // let targ_rudder = if should_turn_left {
                 //     if curr_dir.rotate(angle_change_if_started_slowing).to_angle()
