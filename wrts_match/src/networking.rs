@@ -57,7 +57,8 @@ fn stdout_handler(rx: Receiver<WrtsMatchMessage>) {
         match rx.recv() {
             Ok(msg) => {
                 match &msg.msg {
-                    Message::Match2Client(Match2Client::SetTrans { .. }) => {
+                    Message::Match2Client(Match2Client::SetTrans { .. })
+                    | Message::Match2Client(Match2Client::SetTurretDirs { .. }) => {
                         trace!("Sending: {msg:?}")
                     }
                     _ => info!("Sending: {msg:?}"),

@@ -1,5 +1,7 @@
 use std::{
     collections::HashMap,
+    f32::consts::PI,
+    f64::consts::E,
     ops::{Index, IndexMut},
     time::Duration,
 };
@@ -156,28 +158,91 @@ fn update_ship_velocity(
         };
 
         let new_vel = {
-            let targ_rudder = f32::clamp(
-                (targ_dir - curr_dir) * ship.0.template.rudder_acceleration.powi(2),
-                -1.,
-                1.,
-            );
-            ship.0.curr_rudder = f32::clamp(
-                ship.0.curr_rudder
-                    + time.delta_secs()
-                        * (targ_rudder - ship.0.curr_rudder)
-                        * ship.0.template.rudder_acceleration,
-                -1.,
-                1.,
-            );
+            // let targ_rudder = f32::clamp(
+            //     (targ_dir - curr_dir) * ship.0.template.rudder_acceleration.powi(2),
+            //     -1.,
+            //     1.,
+            // );
+            let targ_rudder = {
+                let curr_dir = Vec2::from_angle(curr_dir);
+                let targ_dir = Vec2::from_angle(targ_dir);
+                // let ship_dir_delta = curr_dir.angle_to(targ_dir) + PI;
+                let angle_change_if_started_slowing = ship.0.curr_rudder.powi(2)
+                    / ship.0.template.rudder_acceleration
+                    * ship.0.curr_rudder.signum();
+                let angle_change_if_started_slowing =
+                    Vec2::from_angle(angle_change_if_started_slowing);
+
+                let should_turn_left = targ_dir.to_angle() > curr_dir.to_angle();
+
+                let targ_rudder = if should_turn_left {
+                    if curr_dir.rotate(angle_change_if_started_slowing).to_angle()
+                        >= targ_dir.to_angle()
+                    {
+                        0.
+                    } else {
+                        1.
+                    }
+                } else {
+                    if curr_dir.rotate(angle_change_if_started_slowing).to_angle()
+                        <= targ_dir.to_angle()
+                    {
+                        0.
+                    } else {
+                        -1.
+                    }
+                };
+
+                // let targ_rudder = if should_turn_left {
+                //     if curr_dir.rotate(angle_change_if_started_slowing).to_angle()
+                //         >= targ_dir.to_angle()
+                //     {
+                //         0.
+                //     } else {
+                //         1.
+                //     }
+                // } else {
+                //     if curr_dir.rotate(angle_change_if_started_slowing).to_angle()
+                //         <= targ_dir.to_angle()
+                //     {
+                //         0.
+                //     } else {
+                //         -1.
+                //     }
+                // };
+
+                // info!(
+                //     "targ_rudder={targ_rudder}, curr_dir={curr_dir}({}), targ_dir={targ_dir}({}), ship_dir_delta={ship_dir_delta}, angle_change={angle_change_if_started_slowing}",
+                //     curr_dir, targ_dir
+                // );
+
+                // let targ_rudder = if angle_change_if_started_slowing >= ship_dir_delta {
+                //     0.
+                // } else {
+                //     if targ_dir.to_angle() > curr_dir.to_angle() {
+                //         1.
+                //     } else {
+                //         -1.
+                //     }
+                // };
+                // info!(
+                //     "targ_rudder={targ_rudder}, curr_dir={curr_dir}({}), targ_dir={targ_dir}({}), ship_dir_delta={ship_dir_delta}, angle_change={angle_change_if_started_slowing}",
+                //     curr_dir.to_angle(),
+                //     targ_dir.to_angle()
+                // );
+                targ_rudder
+            };
+            ship.0.curr_rudder += time.delta_secs()
+                * (targ_rudder - ship.0.curr_rudder)
+                * ship.0.template.rudder_acceleration;
+            ship.0.curr_rudder = ship.0.curr_rudder.clamp(-1., 1.);
+
             let new_dir = curr_dir + ship.0.curr_rudder * time.delta_secs();
-            ship.0.curr_speed = f32::clamp(
-                ship.0.curr_speed
-                    + time.delta_secs()
-                        * (targ_speed - ship.0.curr_speed)
-                        * ship.0.template.engine_acceleration.mps(),
-                0.,
-                ship.0.template.max_speed.mps(),
-            );
+
+            ship.0.curr_speed += time.delta_secs()
+                * (targ_speed - ship.0.curr_speed)
+                * ship.0.template.engine_acceleration.mps();
+            ship.0.curr_speed = ship.0.curr_speed.clamp(0., ship.0.template.max_speed.mps());
 
             Vec2::from_angle(new_dir) * ship.0.curr_speed
         };
