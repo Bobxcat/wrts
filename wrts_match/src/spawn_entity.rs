@@ -65,7 +65,6 @@ impl Command for SpawnShipCommand {
                                 ),
                             })
                             .collect_vec(),
-                        curr_rudder: 0.,
                         curr_speed: 0.,
                     },
                     BaseDetection(template.detection),

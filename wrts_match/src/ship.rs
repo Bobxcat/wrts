@@ -17,7 +17,6 @@ pub struct TurretState {
 pub struct Ship {
     pub template: &'static ShipTemplate,
     pub turret_states: Vec<TurretState>,
-    pub curr_rudder: f32,
     pub curr_speed: f32,
 }
 
