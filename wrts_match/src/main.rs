@@ -105,6 +105,30 @@ struct FireTarget {
     ship: Entity,
 }
 
+#[derive(Debug, Component, Clone)]
+#[require(Team, Velocity)]
+struct Torpedo {
+    owning_ship: Entity,
+    damage: f64,
+    inital_pos: Vec2,
+    max_range: f32,
+}
+
+fn torpedo_reloading(ships: Query<&mut Ship>, time: Res<Time>) {
+    for mut ship in ships {
+        if let Some(torpedoes) = &ship.template.torpedoes {
+            if ship.torpedoes_reloaded >= torpedoes.volleys {
+                continue;
+            }
+
+            ship.torpedo_reload_timer.tick(time.delta());
+            if ship.torpedo_reload_timer.just_finished() {
+                ship.torpedoes_reloaded += 1;
+            }
+        }
+    }
+}
+
 fn update_ship_velocity(
     ships: Query<(
         &mut Ship,
@@ -160,7 +184,7 @@ fn update_ship_velocity(
 
         let (new_vel, new_dir) = {
             let turn_rate_limiter =
-                f32::clamp(ship.0.curr_speed / Speed::from_kts(10.).mps(), 0., 1.);
+                f32::clamp(ship.0.curr_speed / Speed::from_kts(20.).mps(), 0., 1.);
             let new_dir = Vec2::from_angle(curr_dir).rotate_towards(
                 Vec2::from_angle(targ_dir),
                 turn_rate_limiter * ship.0.template.turning_rate.radps() * time.delta_secs(),
@@ -535,6 +559,7 @@ fn main() -> Result<()> {
                 apply_velocity.after(update_ship_velocity),
                 force_ship_in_map.after(apply_velocity),
                 move_bullets,
+                torpedo_reloading,
                 collide_bullets.after(move_bullets),
                 fire_bullets.after(DetectionSystems),
             ),

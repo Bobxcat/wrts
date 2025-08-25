@@ -83,6 +83,7 @@ pub struct ShipTemplate {
     pub detection: f32,
     pub turret_templates: SlotMap<TurretTemplateId, TurretTemplate>,
     pub turret_instances: Vec<TurretInstance>,
+    pub torpedoes: Option<Torpedoes>,
 }
 
 /// A unique numerical identifier for each ship template,
@@ -263,6 +264,14 @@ pub struct AngleRange {
 }
 
 impl AngleRange {
+    pub fn start_dir(&self) -> Vec2 {
+        self.from
+    }
+
+    pub fn end_dir(&self) -> Vec2 {
+        self.to
+    }
+
     pub fn from_angles_deg(from: f32, to: f32) -> Self {
         Self::from_angles(from.to_radians(), to.to_radians())
     }
@@ -283,7 +292,7 @@ impl AngleRange {
         }
     }
 
-    pub fn rotate_by(self, dir: f32) -> Self {
+    pub fn rotated_by(self, dir: f32) -> Self {
         let dir = Vec2::from_angle(dir);
         Self {
             from: dir.rotate(self.from),
@@ -378,5 +387,24 @@ impl TurretInstance {
             ship_pos,
             ship_rot,
         )
+    }
+}
+
+#[derive(Debug)]
+pub struct Torpedoes {
+    pub reload_secs: f32,
+    pub volleys: usize,
+    pub torps_per_volley: usize,
+    pub spread: f32,
+    pub damage: f64,
+    pub speed: Speed,
+    pub range: f32,
+    pub port_firing_angle: AngleRange,
+}
+
+impl Torpedoes {
+    pub fn starboard_firing_angle(&self) -> AngleRange {
+        let port = self.port_firing_angle;
+        AngleRange::from_vectors(vec2(port.to.x, -port.to.y), vec2(port.from.x, -port.from.y))
     }
 }

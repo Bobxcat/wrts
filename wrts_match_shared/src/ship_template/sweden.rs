@@ -53,6 +53,16 @@ impl ShipTemplate {
                     default_dir: 0.,
                 },
             ],
+            torpedoes: Some(Torpedoes {
+                reload_secs: 70.,
+                volleys: 2,
+                torps_per_volley: 3,
+                spread: 6f32.to_radians(),
+                damage: 10_700.,
+                speed: Speed::from_kts(80. * SHIP_SPEED_SCALE),
+                range: 12_000.,
+                port_firing_angle: AngleRange::from_angles_deg(60., 120.),
+            }),
         }
     }
 }

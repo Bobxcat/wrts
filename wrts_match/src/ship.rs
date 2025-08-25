@@ -18,6 +18,8 @@ pub struct Ship {
     pub template: &'static ShipTemplate,
     pub turret_states: Vec<TurretState>,
     pub curr_speed: f32,
+    pub torpedoes_reloaded: usize,
+    pub torpedo_reload_timer: Timer,
 }
 
 pub fn apply_dispersion(dispersion: &Dispersion, nominal_direction: Vec3) -> Vec3 {

@@ -7,6 +7,7 @@ mod ui;
 use std::{
     collections::{HashMap, HashSet},
     convert::identity,
+    f32::consts::FRAC_PI_2,
     hash::RandomState,
     iter,
 };
@@ -155,6 +156,118 @@ impl Default for Team {
 impl Team {
     pub fn is_this_client(self, this_client: ThisClient) -> bool {
         self.0 == this_client.0
+    }
+}
+
+#[derive(Component, Debug, Clone)]
+#[require(Team, Transform, Sprite, DetectionStatus)]
+struct Torpedo {
+    owning_ship: Entity,
+    damage: f64,
+    speed: f32,
+}
+
+fn fire_torpedoes(
+    mut gizmos: Gizmos,
+    selected: Query<(Entity, &Ship, &Transform), With<Selected>>,
+    cursor_pos: Res<CursorWorldPos>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    shared_entities: Res<SharedEntityTracking>,
+    mut server: ResMut<ServerConnection>,
+) {
+    let Ok((selected, selected_ship, selected_trans)) = selected.single() else {
+        return;
+    };
+
+    let Some(torps) = selected_ship.template.torpedoes.as_ref() else {
+        return;
+    };
+
+    let firing_angles =
+        [torps.port_firing_angle, torps.starboard_firing_angle()].map(|angle_range| {
+            angle_range.rotated_by(selected_trans.rotation.to_euler(EulerRot::ZXY).0)
+        });
+
+    let ship_pos = selected_trans.translation.truncate();
+    let angles_color = Color::linear_rgb(0.1, 0.4, 0.8);
+    let min_dist = 100.;
+    let max_dist = torps.range;
+
+    for angle_range in firing_angles {
+        let iso = Isometry2d::new(
+            ship_pos,
+            Rot2::radians(angle_range.start_dir().to_angle() - FRAC_PI_2),
+        );
+        let arc_angle = angle_range.start_dir().angle_to(angle_range.end_dir());
+        gizmos.arc_2d(iso, arc_angle, min_dist, angles_color);
+        gizmos
+            .arc_2d(iso, arc_angle, max_dist, angles_color)
+            .resolution(64);
+        gizmos.line_2d(
+            ship_pos + angle_range.start_dir() * min_dist,
+            ship_pos + angle_range.start_dir() * max_dist,
+            angles_color,
+        );
+        gizmos.line_2d(
+            ship_pos + angle_range.end_dir() * min_dist,
+            ship_pos + angle_range.end_dir() * max_dist,
+            angles_color,
+        );
+    }
+
+    let Some(fire_dir) = (cursor_pos.0 - ship_pos).try_normalize() else {
+        return;
+    };
+    let is_valid_angle = firing_angles
+        .into_iter()
+        .any(|angle_range| angle_range.contains(fire_dir));
+    if is_valid_angle {
+        gizmos.line_2d(
+            ship_pos + fire_dir * min_dist,
+            ship_pos + fire_dir * max_dist,
+            angles_color,
+        );
+
+        if mouse.just_pressed(MouseButton::Right) && only_modifier_keys_pressed(&keyboard, []) {
+            let _ = server.send(Message::Client2Match(Client2Match::LaunchTorpedoVolley {
+                ship: shared_entities[selected],
+                dir: fire_dir,
+            }));
+        }
+    }
+}
+
+fn update_torpedo_displays(
+    mut gizmos: Gizmos,
+    torps: Query<(&Torpedo, &Team, &Transform, &mut Sprite, &DetectionStatus)>,
+    this_client: Res<ThisClient>,
+    zoom: Res<MapZoom>,
+    settings: Res<PlayerSettings>,
+) {
+    for (torp, torp_team, torp_trans, mut torp_sprite, torp_detection) in torps {
+        let is_visible =
+            torp_team.is_this_client(*this_client) || *torp_detection == DetectionStatus::Detected;
+
+        match is_visible {
+            true => {
+                *torp_sprite = Sprite::from_color(
+                    settings.team_colors(*torp_team, *this_client).ship_color,
+                    vec2(20., 7.) * zoom.0,
+                );
+                let torp_dir = Vec2::from_angle(torp_trans.rotation.to_euler(EulerRot::ZXY).0);
+                let torp_pos = torp_trans.translation.truncate();
+                gizmos.line_gradient_2d(
+                    torp_pos - torp_dir * 10. * zoom.0,
+                    torp_pos - torp.speed / 75. * torp_dir * 10. * zoom.0,
+                    Color::WHITE,
+                    Color::linear_rgb(0.5, 0.5, 0.5),
+                );
+            }
+            false => {
+                *torp_sprite = Sprite::default();
+            }
+        }
     }
 }
 
@@ -668,12 +781,14 @@ pub fn run() {
             (
                 update_selection,
                 update_selected_ship_orders.after(update_selection),
+                fire_torpedoes.after(update_selection),
                 update_selected_ship_orders_display.after(update_selected_ship_orders),
                 update_ship_ghosts,
                 update_ship_ghosts_display.after(update_ship_ghosts),
                 update_camera,
                 draw_background,
                 update_bullet_displays,
+                update_torpedo_displays,
                 update_ship_displays,
             )
                 .run_if(in_state(AppState::InMatch)),

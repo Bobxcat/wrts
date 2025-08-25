@@ -69,6 +69,7 @@ impl ShipTemplate {
                     default_dir: 0.,
                 },
             ],
+            torpedoes: None,
         }
     }
 }

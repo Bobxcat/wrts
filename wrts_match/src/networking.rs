@@ -2,18 +2,19 @@ use bevy::prelude::*;
 use itertools::Itertools;
 use std::io::stdin;
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
+use std::time::Duration;
 use std::{collections::HashMap, io::Write, ops::Deref};
-use wrts_messaging::{Client2Match, Match2Client, Message, WrtsMatchMessage};
+use wrts_messaging::{Client2Match, Match2Client, Message, SharedEntityId, WrtsMatchMessage};
 
 use wrts_messaging::{
     ClientId, ClientSharedInfo, RecvFromStream, WrtsMatchInitMessage, read_from_stream_sync,
     write_to_stream_sync,
 };
 
-use crate::detection::DetectionStatus;
+use crate::detection::{BaseDetection, DetectionStatus};
 pub use crate::networking::shared_entity_tracking::SharedEntityTracking;
 use crate::ship::Ship;
-use crate::{FireTarget, Health, MoveOrder, Team};
+use crate::{FireTarget, Health, MoveOrder, Team, Torpedo, Velocity};
 
 pub struct NetworkingPlugin;
 
@@ -243,7 +244,7 @@ fn read_messages(
     shared_entities: Res<SharedEntityTracking>,
     mut exit: EventWriter<AppExit>,
 
-    ships: Query<&Ship>,
+    ships: Query<(&Ship, &Transform)>,
     teams: Query<&Team>,
 ) {
     loop {
@@ -321,6 +322,13 @@ fn read_messages(
                     }
                 }
             }
+            Message::Client2Match(Client2Match::LaunchTorpedoVolley { ship, dir }) => {
+                commands.queue(LaunchTorpedoVolleyCommand {
+                    msg_sender,
+                    owning_ship_id: ship,
+                    dir,
+                });
+            }
             Message::Client2Match(Client2Match::InitB { .. })
             | Message::Match2Client(_)
             | Message::Client2Lobby(_)
@@ -328,6 +336,117 @@ fn read_messages(
                 error!("Received unexpected message: {msg:?}");
             }
         };
+    }
+}
+
+struct LaunchTorpedoVolleyCommand {
+    msg_sender: ClientId,
+    owning_ship_id: SharedEntityId,
+    dir: Vec2,
+}
+
+impl Command for LaunchTorpedoVolleyCommand {
+    fn apply(self, world: &mut World) -> () {
+        let msg_sender = self.msg_sender;
+        let Some(owning_ship_local) = world
+            .resource::<SharedEntityTracking>()
+            .get_by_shared(self.owning_ship_id)
+        else {
+            warn!(
+                "Client {msg_sender} sent message with bad ship id: {:?}",
+                self.owning_ship_id
+            );
+            return;
+        };
+        if world
+            .get::<Team>(owning_ship_local)
+            .and_then(|team| (team.0 == msg_sender).then_some(()))
+            .is_none()
+        {
+            warn!(
+                "Client {msg_sender} tried to LaunchTorpedoVolley on an entity not owned by them"
+            );
+            return;
+        }
+        let Some((mut ship, ship_trans)) = world
+            .query::<(&mut Ship, &Transform)>()
+            .get_mut(world, owning_ship_local)
+            .ok()
+        else {
+            warn!(
+                "Client {msg_sender} tried to LaunchTorpedoVolley on a ship that doesn't exist anymore"
+            );
+            return;
+        };
+        let ship_dir = ship_trans.rotation.to_euler(EulerRot::ZYX).0;
+        let Some(torpedoes) = ship.template.torpedoes.as_ref() else {
+            warn!(
+                "Client {msg_sender} tried to LaunchTorpedoVolley on a ship that doesn't have torpedoes"
+            );
+            return;
+        };
+        let can_fire = ship.torpedoes_reloaded > 0
+            && (torpedoes
+                .port_firing_angle
+                .rotated_by(ship_dir)
+                .contains(self.dir)
+                || torpedoes
+                    .starboard_firing_angle()
+                    .rotated_by(ship_dir)
+                    .contains(self.dir));
+        if !can_fire {
+            return;
+        }
+        ship.torpedoes_reloaded -= 1;
+        let pos = ship_trans.translation.truncate();
+        let vel = self.dir * torpedoes.speed.mps();
+        let rot = Quat::from_rotation_z(vel.to_angle());
+
+        let entity = {
+            world
+                .spawn((
+                    Torpedo {
+                        owning_ship: owning_ship_local,
+                        damage: torpedoes.damage,
+                        inital_pos: pos,
+                        max_range: torpedoes.range,
+                    },
+                    Team(self.msg_sender),
+                    Transform {
+                        translation: pos.extend(0.),
+                        rotation: rot,
+                        ..default()
+                    },
+                    Velocity(vel.extend(0.)),
+                    BaseDetection(2_000.),
+                    DetectionStatus {
+                        is_detected: false,
+                        detection_increased_by_firing: Timer::new(Duration::ZERO, TimerMode::Once)
+                            .tick(Duration::MAX)
+                            .clone(),
+                    },
+                ))
+                .id()
+        };
+
+        let shared_id = world.resource_mut::<SharedEntityTracking>().insert(entity);
+
+        let mut clients = world.query::<&ClientInfo>();
+        let msgs_tx = world.get_resource::<MessagesSend>().unwrap();
+
+        for cl in clients.iter(world) {
+            msgs_tx.send(WrtsMatchMessage {
+                client: cl.info.id,
+                msg: Message::Match2Client(Match2Client::SpawnTorpedo {
+                    id: shared_id,
+                    team: self.msg_sender,
+                    owning_ship: self.owning_ship_id,
+                    damage: torpedoes.damage,
+                    pos,
+                    vel,
+                }),
+            });
+        }
     }
 }
 

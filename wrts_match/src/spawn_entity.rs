@@ -6,7 +6,7 @@ use wrts_match_shared::ship_template::ShipTemplateId;
 use wrts_messaging::{Match2Client, Message, WrtsMatchMessage};
 
 use crate::{
-    Bullet, Health, Team, Velocity,
+    Bullet, Health, Team, Torpedo, Velocity,
     detection::{BaseDetection, CanDetect, DetectionStatus},
     networking::{ClientInfo, MessagesSend, SharedEntityTracking},
     ship::{Ship, TurretState},
@@ -66,6 +66,15 @@ impl Command for SpawnShipCommand {
                             })
                             .collect_vec(),
                         curr_speed: 0.,
+                        torpedoes_reloaded: 0,
+                        torpedo_reload_timer: match &template.torpedoes {
+                            Some(torps) => {
+                                Timer::from_seconds(torps.reload_secs, TimerMode::Repeating)
+                            }
+                            None => Timer::new(Duration::ZERO, TimerMode::Once)
+                                .tick(Duration::MAX)
+                                .clone(),
+                        },
                     },
                     BaseDetection(template.detection),
                     DetectionStatus {
@@ -166,6 +175,64 @@ impl Command for SpawnBulletCommand {
                     damage: self.bullet.damage,
                     pos: self.bullet.inital_pos,
                     rot,
+                }),
+            });
+        }
+    }
+}
+
+/// A command that launches a torpedo from a boat,
+/// and __will update the ship that launched it
+struct LaunchTorpedoCommand {
+    pub torp: Torpedo,
+    pub team: Team,
+    pub vel: Velocity,
+}
+
+impl Command for LaunchTorpedoCommand {
+    fn apply(self, world: &mut World) -> () {
+        let rot = Quat::from_rotation_z(self.vel.0.truncate().to_angle());
+
+        let entity = {
+            world
+                .spawn((
+                    self.torp.clone(),
+                    self.team,
+                    Transform {
+                        translation: self.torp.inital_pos.extend(0.),
+                        rotation: rot,
+                        ..default()
+                    },
+                    BaseDetection(2_000.),
+                    DetectionStatus {
+                        is_detected: false,
+                        detection_increased_by_firing: Timer::new(Duration::ZERO, TimerMode::Once)
+                            .tick(Duration::MAX)
+                            .clone(),
+                    },
+                ))
+                .id()
+        };
+
+        let shared_id = world.resource_mut::<SharedEntityTracking>().insert(entity);
+
+        let mut clients = world.query::<&ClientInfo>();
+        let msgs_tx = world.get_resource::<MessagesSend>().unwrap();
+
+        let owning_ship = world
+            .resource::<SharedEntityTracking>()
+            .get_by_local(self.torp.owning_ship)
+            .unwrap();
+        for cl in clients.iter(world) {
+            msgs_tx.send(WrtsMatchMessage {
+                client: cl.info.id,
+                msg: Message::Match2Client(Match2Client::SpawnTorpedo {
+                    id: shared_id,
+                    team: self.team.0,
+                    owning_ship,
+                    damage: self.torp.damage,
+                    pos: self.torp.inital_pos,
+                    vel: self.vel.0.truncate(),
                 }),
             });
         }

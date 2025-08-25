@@ -58,6 +58,10 @@ pub enum Client2Match {
         id: SharedEntityId,
         targ: Option<SharedEntityId>,
     },
+    LaunchTorpedoVolley {
+        ship: SharedEntityId,
+        dir: Vec2,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -86,6 +90,14 @@ pub enum Match2Client {
         damage: f64,
         pos: Vec3,
         rot: Quat,
+    },
+    SpawnTorpedo {
+        id: SharedEntityId,
+        team: ClientId,
+        owning_ship: SharedEntityId,
+        damage: f64,
+        pos: Vec2,
+        vel: Vec2,
     },
     SetTrans {
         id: SharedEntityId,

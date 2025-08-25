@@ -11,7 +11,7 @@ use itertools::Itertools;
 use wrts_messaging::{Client2Match, ClientSharedInfo, Match2Client, Message, SharedEntityId};
 
 use crate::{
-    AppState, Bullet, DetectionStatus, Health, MoveOrder, PlayerSettings, Team,
+    AppState, Bullet, DetectionStatus, Health, MoveOrder, PlayerSettings, Team, Torpedo,
     networking::{ClientInfo, ServerConnection, ThisClient},
     ship::{Ship, TurretState},
 };
@@ -212,6 +212,33 @@ fn in_match_networking(
                         Transform {
                             translation: pos.extend(0.),
                             rotation: rot,
+                            ..default()
+                        },
+                    ))
+                    .id();
+                shared_entities.insert(id, local);
+            }
+            Message::Match2Client(Match2Client::SpawnTorpedo {
+                id,
+                team,
+                owning_ship,
+                damage,
+                pos,
+                vel,
+            }) => {
+                let local = commands
+                    .spawn((
+                        StateScoped(AppState::InMatch),
+                        Torpedo {
+                            owning_ship: shared_entities[owning_ship],
+                            damage,
+                            speed: vel.length(),
+                        },
+                        DetectionStatus::Never,
+                        Team(team),
+                        Transform {
+                            translation: pos.extend(0.),
+                            rotation: Quat::from_rotation_z(vel.to_angle()),
                             ..default()
                         },
                     ))
