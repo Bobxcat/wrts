@@ -8,6 +8,7 @@ use std::{
     collections::{HashMap, HashSet},
     convert::identity,
     hash::RandomState,
+    iter,
 };
 
 use bevy::{
@@ -17,18 +18,13 @@ use bevy::{
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
-use wrts_match_shared::{ShipPathBezier, ShipPathCatmull};
 use wrts_messaging::{Client2Match, ClientId, Message};
 
 use crate::{
     in_match::{InMatchPlugin, SharedEntityTracking},
     networking::{NetworkingPlugin, ServerConnection, ThisClient},
     ship::{Ship, TurretState},
-    ui::{
-        in_game::InGameUIPlugin,
-        lobby::LobbyUiPlugin,
-        // main_menu::MainMenuUIPlugin,
-    },
+    ui::{in_game::InGameUIPlugin, lobby::LobbyUiPlugin},
 };
 
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -451,39 +447,11 @@ fn update_selected_ship_orders_display(
         if let Some(move_order) = selected_move_order
             && !move_order.waypoints.is_empty()
         {
-            for &pt in &move_order.waypoints {
-                gizmos.circle_2d(Isometry2d::from_translation(pt), 5. * zoom.0, Color::WHITE);
-            }
-
-            // Bezier
-            let path = ShipPathBezier::new(
-                selected_trans.translation.truncate(),
-                Vec2::from_angle(selected_trans.rotation.to_euler(EulerRot::ZXY).0),
-                move_order.waypoints.clone(),
+            gizmos.linestrip_2d(
+                iter::once(selected_trans.translation.truncate())
+                    .chain(move_order.waypoints.iter().copied()),
+                Color::linear_rgb(1., 0.2, 0.2),
             );
-            let mut pts = vec![];
-            let samples = 256;
-            for i in 0..samples {
-                let t = i as f32 / samples as f32;
-                pts.push(path.sample(t));
-            }
-
-            gizmos.linestrip_2d(pts, Color::WHITE);
-
-            // CATMULL
-            let path = ShipPathCatmull::new(
-                selected_trans.translation.truncate(),
-                Vec2::from_angle(selected_trans.rotation.to_euler(EulerRot::ZXY).0),
-                move_order.waypoints.clone(),
-            );
-            let mut pts = vec![];
-            let samples = 256;
-            for i in 0..samples {
-                let t = i as f32 / samples as f32;
-                pts.push(path.sample(t));
-            }
-
-            gizmos.linestrip_2d(pts, Color::linear_rgb(1., 0.2, 0.2));
         }
     }
 }
