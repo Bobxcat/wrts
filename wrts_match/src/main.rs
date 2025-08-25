@@ -9,7 +9,7 @@ use std::{
 use bevy::{prelude::*, window::ExitCondition};
 use enum_map::EnumMap;
 use itertools::Itertools;
-use wrts_match_shared::ship_template::Speed;
+use wrts_match_shared::ship_template::{AngleRange, Speed};
 use wrts_messaging::{ClientId, Match2Client, Message, WrtsMatchMessage};
 
 use crate::{
@@ -163,7 +163,7 @@ fn update_ship_velocity(
                 f32::clamp(ship.0.curr_speed / Speed::from_kts(10.).mps(), 0., 1.);
             let new_dir = Vec2::from_angle(curr_dir).rotate_towards(
                 Vec2::from_angle(targ_dir),
-                turn_rate_limiter * ship.0.template.turning_rate * time.delta_secs(),
+                turn_rate_limiter * ship.0.template.turning_rate.radps() * time.delta_secs(),
             );
 
             let speed_delta = targ_speed - ship.0.curr_speed;
@@ -401,7 +401,61 @@ fn fire_bullets(
             continue;
         };
 
-        turret_state.dir = bullet_azimuth - ship_trans.rotation.to_euler(EulerRot::ZYX).0;
+        // Turn turret and make sure the turret's turned before firing
+        {
+            let targ_dir =
+                Vec2::from_angle(bullet_azimuth - ship_trans.rotation.to_euler(EulerRot::ZYX).0);
+            let curr_dir = Vec2::from_angle(turret_state.dir);
+
+            let rotate_dir = match turret_instance.movement_angle {
+                Some(movement_angle) => {
+                    if !AngleRange::from_vectors(curr_dir, targ_dir)
+                        .overlaps(movement_angle.inverse())
+                    {
+                        1.
+                    } else if !AngleRange::from_vectors(targ_dir, curr_dir)
+                        .overlaps(movement_angle.inverse())
+                    {
+                        -1.
+                    } else {
+                        let targ_dir_clamped = movement_angle.clamp_angle(targ_dir);
+                        if targ_dir.angle_to(targ_dir_clamped) >= 0. {
+                            // Snapped to the end angle of the `movement_angle`
+                            -1.
+                        } else {
+                            // Snapped to the start angle of the `movement_angle`
+                            1.
+                        }
+                    }
+                }
+                None => curr_dir.angle_to(targ_dir).signum(),
+            };
+
+            let new_dir = {
+                let mut dir = curr_dir.rotate(Vec2::from_angle(
+                    rotate_dir * turret_template.turn_rate.radps() * time.delta_secs(),
+                ));
+                if let Some(movement_angle) = turret_instance.movement_angle {
+                    dir = movement_angle.clamp_angle(dir);
+                }
+                dir
+            };
+            turret_state.dir = new_dir.to_angle();
+
+            let turret_not_aimed = new_dir.angle_to(targ_dir).abs() > PI / 180.;
+            let turret_outside_firing_angle =
+                if let Some(firing_angle) = turret_instance.firing_angle {
+                    !firing_angle.contains(new_dir)
+                } else {
+                    false
+                };
+            if turret_not_aimed || turret_outside_firing_angle {
+                if !turret_reload_timer.finished() {
+                    turret_reload_timer.tick(time.delta());
+                }
+                continue;
+            }
+        }
 
         for _ in 0..turret_reload_timer.times_finished_this_tick() {
             for barrel_idx in 0..turret_template.barrel_count {
@@ -417,7 +471,7 @@ fn fire_bullets(
                 // The bullet should start very slightly above the water,
                 // but not by very much since ships have a small draft so
                 // it would mean a lot more missing
-                let bullet_start = bullet_start.extend(0.1);
+                let bullet_start = bullet_start.extend(0.01);
 
                 let bullet = Bullet {
                     owning_ship: ship_entity,

@@ -2,10 +2,14 @@ mod germany;
 mod russia;
 mod sweden;
 
+use std::f32::consts::PI;
+
 use glam::{EulerRot, Quat, Vec2, vec2};
 use paste::paste;
 use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
+
+use crate::math;
 
 const SHIP_SPEED_SCALE: f32 = 5.2;
 
@@ -34,6 +38,36 @@ impl Speed {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct AngularSpeed(f32);
+
+impl AngularSpeed {
+    /// Radians per second
+    pub fn radps(self) -> f32 {
+        self.0
+    }
+
+    /// Radians per second
+    pub fn from_radps(radps: f32) -> Self {
+        Self(radps)
+    }
+
+    /// Rotations per minute
+    pub fn rpm(self) -> f32 {
+        self.0 * 30. / PI
+    }
+
+    /// Seconds per rotation
+    pub fn from_spr(spr: f32) -> Self {
+        Self(2. * PI / spr)
+    }
+
+    /// Seconds per half turn
+    pub fn from_halfturn(sphalfturn: f32) -> Self {
+        Self::from_spr(sphalfturn * 0.5)
+    }
+}
+
 /// Template information
 #[derive(Debug)]
 pub struct ShipTemplate {
@@ -43,9 +77,7 @@ pub struct ShipTemplate {
     pub max_speed: Speed,
     /// Speed gained per second
     pub engine_acceleration: Speed,
-    /// Max radians/sec of turning this boat
-    /// can perform
-    pub turning_rate: f32,
+    pub turning_rate: AngularSpeed,
     // pub rudder_acceleration: f32,
     pub max_health: f64,
     pub detection: f32,
@@ -225,6 +257,72 @@ impl HullLocation {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct AngleRange {
+    from: Vec2,
+    to: Vec2,
+}
+
+impl AngleRange {
+    pub fn from_angles_deg(from: f32, to: f32) -> Self {
+        Self::from_angles(from.to_radians(), to.to_radians())
+    }
+
+    pub fn from_vectors(from: Vec2, to: Vec2) -> Self {
+        Self {
+            from: from.normalize(),
+            to: to.normalize(),
+        }
+    }
+
+    /// An angle range that sweeps counter clockwise
+    /// from `from` to `to`
+    pub fn from_angles(from: f32, to: f32) -> Self {
+        Self {
+            from: Vec2::from_angle(from),
+            to: Vec2::from_angle(to),
+        }
+    }
+
+    pub fn rotate_by(self, dir: f32) -> Self {
+        let dir = Vec2::from_angle(dir);
+        Self {
+            from: dir.rotate(self.from),
+            to: dir.rotate(self.to),
+        }
+    }
+
+    pub fn inverse(self) -> Self {
+        Self {
+            from: self.to,
+            to: self.from,
+        }
+    }
+
+    pub fn contains(self, v: Vec2) -> bool {
+        math::vector_is_within_swept_angle(v, self.from, self.to)
+    }
+
+    /// Maintains the length of `v` but clamps its angle
+    /// to be within this range of angles
+    pub fn clamp_angle(self, v: Vec2) -> Vec2 {
+        if self.contains(v) {
+            return v;
+        }
+
+        if self.from.angle_to(v).abs() > self.to.angle_to(v).abs() {
+            self.to * v.length()
+        } else {
+            self.from * v.length()
+        }
+    }
+
+    /// Returns whether or not this range of angles overlaps another.
+    pub fn overlaps(self, other: Self) -> bool {
+        self.contains(other.from) || self.contains(other.to) || other.contains(self.from)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct Dispersion {
     /// Vertical radius of the dispersion elliptic cone.
     /// The ellipse is drawn at 1 km
@@ -249,6 +347,7 @@ pub struct TurretTemplate {
     pub max_range: f32,
     /// The dispersion per km of shell distance
     pub dispersion: Dispersion,
+    pub turn_rate: AngularSpeed,
     /// The list of barrel positions on the turret
     pub barrel_count: u8,
     /// The distance between adjacent barrels on the turret
@@ -260,6 +359,11 @@ pub struct TurretInstance {
     pub ship_template: ShipTemplateId,
     pub template: TurretTemplateId,
     pub location_on_ship: HullLocation,
+    /// If this is `None`, this turret can move in any orientation
+    pub movement_angle: Option<AngleRange>,
+    /// If this is `None`, the firing angles are equal to the
+    /// movement angles
+    pub firing_angle: Option<AngleRange>,
     pub default_dir: f32,
 }
 

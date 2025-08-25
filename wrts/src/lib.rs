@@ -422,7 +422,7 @@ fn update_selected_ship_orders_display(
     settings: Res<PlayerSettings>,
     zoom: Res<MapZoom>,
 ) {
-    for (selected_ship, selected_trans, selected_fire_target, selected_move_order) in
+    for (_selected_ship, selected_trans, selected_fire_target, selected_move_order) in
         &ships_selected
     {
         let circle_size = zoom.0 * settings.ship_icon_scale * 0.5 * 1.4;
