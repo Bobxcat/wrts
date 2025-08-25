@@ -30,7 +30,7 @@ impl ShipTemplate {
             },
             max_speed: Speed::from_kts(35. * SHIP_SPEED_SCALE),
             engine_acceleration: Speed::from_kts(5. * SHIP_SPEED_SCALE),
-            turning_rate: 0.5,
+            turning_rate: 0.45,
             max_health: 14_100.,
             detection: 7_200.,
             turret_templates,
