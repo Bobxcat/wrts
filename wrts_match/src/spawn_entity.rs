@@ -66,15 +66,15 @@ impl Command for SpawnShipCommand {
                             })
                             .collect_vec(),
                         curr_speed: 0.,
-                        torpedoes_reloaded: 0,
-                        torpedo_reload_timer: match &template.torpedoes {
-                            Some(torps) => {
-                                Timer::from_seconds(torps.reload_secs, TimerMode::Repeating)
-                            }
-                            None => Timer::new(Duration::ZERO, TimerMode::Once)
-                                .tick(Duration::MAX)
-                                .clone(),
-                        },
+                        torpedo_reloads: template
+                            .torpedoes
+                            .iter()
+                            .flat_map(|torps| {
+                                (0..torps.volleys).map(|_idx| {
+                                    Timer::from_seconds(torps.reload_secs, TimerMode::Repeating)
+                                })
+                            })
+                            .collect(),
                     },
                     BaseDetection(template.detection),
                     DetectionStatus {

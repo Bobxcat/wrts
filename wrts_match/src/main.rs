@@ -116,14 +116,45 @@ struct Torpedo {
 
 fn torpedo_reloading(ships: Query<&mut Ship>, time: Res<Time>) {
     for mut ship in ships {
-        if let Some(torpedoes) = &ship.template.torpedoes {
-            if ship.torpedoes_reloaded >= torpedoes.volleys {
+        for timer in &mut ship.torpedo_reloads {
+            if !timer.finished() {
+                timer.tick(time.delta());
+            }
+        }
+    }
+}
+
+fn collide_torpedoes(
+    mut commands: Commands,
+    mut ships: Query<(Entity, &Ship, &Team, &Transform, &mut Health)>,
+    torpedoes: Query<(Entity, &Torpedo, &Team, &Transform)>,
+) {
+    for (torp_entity, torp, torp_team, torp_trans) in torpedoes {
+        for (ship_entity, ship, ship_team, ship_trans, mut ship_health) in &mut ships {
+            if *torp_team == *ship_team {
                 continue;
             }
-
-            ship.torpedo_reload_timer.tick(time.delta());
-            if ship.torpedo_reload_timer.just_finished() {
-                ship.torpedoes_reloaded += 1;
+            if ship_health.0 <= 0. {
+                continue;
+            }
+            // Calculate collisions in the local space of the ship hull
+            let ship_rot_inv = Vec2::from_angle(-ship_trans.rotation.to_euler(EulerRot::ZXY).0);
+            let (ship_hull_min, ship_hull_max) = ship.template.hull.to_bounds();
+            let torp_pos = ship_rot_inv
+                .rotate(torp_trans.translation.truncate() - ship_trans.translation.truncate());
+            if Vec2::cmple(ship_hull_min.truncate(), torp_pos).all()
+                && Vec2::cmple(torp_pos, ship_hull_max.truncate()).all()
+            {
+                let damage = torp.damage;
+                ship_health.0 -= damage;
+                commands.queue(DespawnNetworkedEntityCommand {
+                    entity: torp_entity,
+                });
+                if ship_health.0 <= 0. {
+                    commands.queue(DespawnNetworkedEntityCommand {
+                        entity: ship_entity,
+                    });
+                }
             }
         }
     }
@@ -289,24 +320,17 @@ fn collide_bullets(
             }
 
             // Calculate collisions in the local space of the ship hull
-            let hull = &ship.template.hull;
-            let ship_hull_min = vec3(-0.5 * hull.length, -0.5 * hull.width, -hull.draft);
-            let ship_hull_max = vec3(0.5 * hull.length, 0.5 * hull.width, hull.freeboard);
-            let bullet_pos =
-                ship_trans.rotation * (bullet_trans.translation - ship_trans.translation);
+            let ship_rot_inv = ship_trans.rotation.normalize().inverse();
+            let (ship_hull_min, ship_hull_max) = ship.template.hull.to_bounds();
+            let bullet_pos = ship_rot_inv * (bullet_trans.translation - ship_trans.translation);
             // FIXME?: we're assuming the bullet impacts when the bullet hits the water
             // Maybe this is fine, because it'll always be approx. correct
-            let bullet_vel = ship_trans.rotation * bullet.inital_vel.with_z(-bullet.inital_vel.z);
+            let bullet_vel = ship_rot_inv * bullet.inital_vel.with_z(-bullet.inital_vel.z);
             if Vec3::cmple(ship_hull_min, bullet_pos).all()
                 && Vec3::cmple(bullet_pos, ship_hull_max).all()
             {
                 let bullet_alignment = bullet_vel.normalize().dot(Vec3::X).abs();
                 let damage = bullet.damage * (1.5 - bullet_alignment as f64);
-                info!(
-                    "Dealing damage:  ship=`{}`, dmg={damage:.2}, health_before={:.2}, align={bullet_alignment:.2}",
-                    ship.template.id.to_name(),
-                    ship_health.0,
-                );
 
                 ship_health.0 -= damage;
 
@@ -560,6 +584,7 @@ fn main() -> Result<()> {
                 force_ship_in_map.after(apply_velocity),
                 move_bullets,
                 torpedo_reloading,
+                collide_torpedoes.after(apply_velocity),
                 collide_bullets.after(move_bullets),
                 fire_bullets.after(DetectionSystems),
             ),

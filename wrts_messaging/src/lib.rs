@@ -3,6 +3,7 @@ use std::{
     io::{self},
     pin::Pin,
     task::Poll,
+    time::Duration,
 };
 
 use anyhow::{Result, anyhow};
@@ -98,6 +99,12 @@ pub enum Match2Client {
         damage: f64,
         pos: Vec2,
         vel: Vec2,
+    },
+    SetReloadedTorps {
+        id: SharedEntityId,
+        ready_to_fire: usize,
+        /// Remaining time until each volley is ready, in ascending order
+        still_reloading: Vec<Duration>,
     },
     SetTrans {
         id: SharedEntityId,

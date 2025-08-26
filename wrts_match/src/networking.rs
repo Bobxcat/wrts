@@ -27,6 +27,7 @@ impl Plugin for NetworkingPlugin {
                 send_transform_updates,
                 send_turret_state_updates,
                 send_health_updates,
+                send_torpedo_reload_updates,
             ),
         );
     }
@@ -385,67 +386,88 @@ impl Command for LaunchTorpedoVolleyCommand {
             );
             return;
         };
-        let can_fire = ship.torpedoes_reloaded > 0
-            && (torpedoes
-                .port_firing_angle
+        let Some((volley_idx, volley_timer)) = ship
+            .torpedo_reloads
+            .iter_mut()
+            .enumerate()
+            .find(|(_idx, timer)| timer.finished())
+        else {
+            // Not reloaded
+            return;
+        };
+        let can_fire = torpedoes
+            .port_firing_angle
+            .rotated_by(ship_dir)
+            .contains(self.dir)
+            || torpedoes
+                .starboard_firing_angle()
                 .rotated_by(ship_dir)
-                .contains(self.dir)
-                || torpedoes
-                    .starboard_firing_angle()
-                    .rotated_by(ship_dir)
-                    .contains(self.dir));
+                .contains(self.dir);
         if !can_fire {
             return;
         }
-        ship.torpedoes_reloaded -= 1;
-        let pos = ship_trans.translation.truncate();
-        let vel = self.dir * torpedoes.speed.mps();
-        let rot = Quat::from_rotation_z(vel.to_angle());
 
-        let entity = {
-            world
-                .spawn((
-                    Torpedo {
-                        owning_ship: owning_ship_local,
-                        damage: torpedoes.damage,
-                        inital_pos: pos,
-                        max_range: torpedoes.range,
-                    },
-                    Team(self.msg_sender),
-                    Transform {
-                        translation: pos.extend(0.),
-                        rotation: rot,
-                        ..default()
-                    },
-                    Velocity(vel.extend(0.)),
-                    BaseDetection(2_000.),
-                    DetectionStatus {
-                        is_detected: false,
-                        detection_increased_by_firing: Timer::new(Duration::ZERO, TimerMode::Once)
+        volley_timer.tick(Duration::from_nanos(1));
+        let ship_pos = ship_trans.translation.truncate();
+
+        for torp_idx in 0..torpedoes.torps_per_volley {
+            let angle_offset = {
+                let s = torpedoes.spread / (torpedoes.torps_per_volley - 1) as f32;
+                (torp_idx as f32 - 0.5 * (torpedoes.torps_per_volley - 1) as f32) * s
+            };
+            let dir = self.dir.rotate(Vec2::from_angle(angle_offset));
+            let vel = dir * torpedoes.speed.mps();
+            let rot = Quat::from_rotation_z(vel.to_angle());
+            let pos = ship_pos + dir * 50.;
+
+            let entity = {
+                world
+                    .spawn((
+                        Torpedo {
+                            owning_ship: owning_ship_local,
+                            damage: torpedoes.damage,
+                            inital_pos: pos,
+                            max_range: torpedoes.range,
+                        },
+                        Team(self.msg_sender),
+                        Transform {
+                            translation: pos.extend(0.),
+                            rotation: rot,
+                            ..default()
+                        },
+                        Velocity(vel.extend(0.)),
+                        BaseDetection(2_000.),
+                        DetectionStatus {
+                            is_detected: false,
+                            detection_increased_by_firing: Timer::new(
+                                Duration::ZERO,
+                                TimerMode::Once,
+                            )
                             .tick(Duration::MAX)
                             .clone(),
-                    },
-                ))
-                .id()
-        };
+                        },
+                    ))
+                    .id()
+            };
 
-        let shared_id = world.resource_mut::<SharedEntityTracking>().insert(entity);
+            let shared_id = world.resource_mut::<SharedEntityTracking>().insert(entity);
 
-        let mut clients = world.query::<&ClientInfo>();
-        let msgs_tx = world.get_resource::<MessagesSend>().unwrap();
+            let mut clients = world.query::<&ClientInfo>();
+            let msgs_tx = world.get_resource::<MessagesSend>().unwrap();
 
-        for cl in clients.iter(world) {
-            msgs_tx.send(WrtsMatchMessage {
-                client: cl.info.id,
-                msg: Message::Match2Client(Match2Client::SpawnTorpedo {
-                    id: shared_id,
-                    team: self.msg_sender,
-                    owning_ship: self.owning_ship_id,
-                    damage: torpedoes.damage,
-                    pos,
-                    vel,
-                }),
-            });
+            for cl in clients.iter(world) {
+                msgs_tx.send(WrtsMatchMessage {
+                    client: cl.info.id,
+                    msg: Message::Match2Client(Match2Client::SpawnTorpedo {
+                        id: shared_id,
+                        team: self.msg_sender,
+                        owning_ship: self.owning_ship_id,
+                        damage: torpedoes.damage,
+                        pos,
+                        vel,
+                    }),
+                });
+            }
         }
     }
 }
@@ -526,6 +548,39 @@ fn send_health_updates(
                 msg: Message::Match2Client(Match2Client::SetHealth {
                     id: shared,
                     health: health.0,
+                }),
+            })
+        }
+    }
+}
+
+fn send_torpedo_reload_updates(
+    ships: Query<(Entity, &Ship)>,
+    clients: Query<&ClientInfo>,
+    msgs_tx: Res<MessagesSend>,
+    shared_entities: Res<SharedEntityTracking>,
+) {
+    let clients = clients.iter().map(|cl| cl.info.id).collect_vec();
+    for (local, ship) in ships {
+        let Some(shared) = shared_entities.get_by_local(local) else {
+            continue;
+        };
+
+        let timers = &ship.torpedo_reloads;
+        let ready_to_fire = timers.iter().filter(|timer| timer.finished()).count();
+        let still_reloading = timers
+            .iter()
+            .filter_map(|timer| (!timer.finished()).then_some(timer.remaining()))
+            .sorted()
+            .collect_vec();
+
+        for cl in clients.clone() {
+            msgs_tx.send(WrtsMatchMessage {
+                client: cl,
+                msg: Message::Match2Client(Match2Client::SetReloadedTorps {
+                    id: shared,
+                    ready_to_fire,
+                    still_reloading: still_reloading.clone(),
                 }),
             })
         }

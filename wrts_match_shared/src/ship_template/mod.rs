@@ -4,7 +4,7 @@ mod sweden;
 
 use std::f32::consts::PI;
 
-use glam::{EulerRot, Quat, Vec2, vec2};
+use glam::{EulerRot, Quat, Vec2, Vec3, vec2, vec3};
 use paste::paste;
 use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
@@ -179,7 +179,7 @@ pub enum ShipClass {
 
 /// * https://naval-encyclopedia.com/ww2
 /// * https://archive.org/details/ship-design-drawings
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Hull {
     /// Overall length (o/a or "length overall")
     pub length: f32,
@@ -189,6 +189,15 @@ pub struct Hull {
     pub freeboard: f32,
     /// Height of the hull below the water
     pub draft: f32,
+}
+
+impl Hull {
+    /// Returns the bounds of this hull, centered at the origin
+    pub fn to_bounds(self) -> (Vec3, Vec3) {
+        let min = vec3(-0.5 * self.length, -0.5 * self.width, -self.draft);
+        let max = vec3(0.5 * self.length, 0.5 * self.width, self.freeboard);
+        (min, max)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -395,6 +404,7 @@ pub struct Torpedoes {
     pub reload_secs: f32,
     pub volleys: usize,
     pub torps_per_volley: usize,
+    /// Total radians of torpedo spread
     pub spread: f32,
     pub damage: f64,
     pub speed: Speed,

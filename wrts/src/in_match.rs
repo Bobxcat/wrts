@@ -205,12 +205,39 @@ fn in_match_networking(
                         Ship {
                             template: ship_base.to_template(),
                             turret_states,
+                            reloaded_torp_volleys: 0,
+                            reloading_torp_volleys: vec![],
                         },
                         DetectionStatus::Never,
                         Team(team),
                         Health(health),
                         Transform {
                             translation: pos.extend(0.),
+                            rotation: rot,
+                            ..default()
+                        },
+                    ))
+                    .id();
+                shared_entities.insert(id, local);
+            }
+            Message::Match2Client(Match2Client::SpawnBullet {
+                id,
+                team,
+                owning_ship,
+                damage,
+                pos,
+                rot,
+            }) => {
+                let local = commands
+                    .spawn((
+                        StateScoped(AppState::InMatch),
+                        Bullet {
+                            owning_ship: shared_entities[owning_ship],
+                            damage,
+                        },
+                        Team(team),
+                        Transform {
+                            translation: pos,
                             rotation: rot,
                             ..default()
                         },
@@ -245,30 +272,21 @@ fn in_match_networking(
                     .id();
                 shared_entities.insert(id, local);
             }
-            Message::Match2Client(Match2Client::SpawnBullet {
+            Message::Match2Client(Match2Client::SetReloadedTorps {
                 id,
-                team,
-                owning_ship,
-                damage,
-                pos,
-                rot,
+                ready_to_fire,
+                still_reloading,
             }) => {
-                let local = commands
-                    .spawn((
-                        StateScoped(AppState::InMatch),
-                        Bullet {
-                            owning_ship: shared_entities[owning_ship],
-                            damage,
-                        },
-                        Team(team),
-                        Transform {
-                            translation: pos,
-                            rotation: rot,
-                            ..default()
-                        },
-                    ))
-                    .id();
-                shared_entities.insert(id, local);
+                commands.queue(move |world: &mut World| {
+                    let Some(local) = world.resource::<SharedEntityTracking>().get_by_shared(id)
+                    else {
+                        return;
+                    };
+                    let mut entity = world.entity_mut(local);
+                    let mut ship = entity.get_mut::<Ship>().unwrap();
+                    ship.reloaded_torp_volleys = ready_to_fire;
+                    ship.reloading_torp_volleys = still_reloading;
+                });
             }
             Message::Match2Client(Match2Client::SetTrans { id, pos, rot }) => {
                 commands.queue(move |world: &mut World| {

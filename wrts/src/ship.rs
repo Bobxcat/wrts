@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use bevy::prelude::*;
 use rand::Fill;
 use rand_distr::Distribution;
@@ -18,4 +20,6 @@ pub struct TurretState {
 pub struct Ship {
     pub template: &'static ShipTemplate,
     pub turret_states: Vec<TurretState>,
+    pub reloaded_torp_volleys: usize,
+    pub reloading_torp_volleys: Vec<Duration>,
 }

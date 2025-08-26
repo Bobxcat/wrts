@@ -167,6 +167,9 @@ struct Torpedo {
     speed: f32,
 }
 
+#[derive(Component, Debug, Clone, Copy)]
+struct TorpedoReloadText;
+
 fn fire_torpedoes(
     mut gizmos: Gizmos,
     selected: Query<(Entity, &Ship, &Transform), With<Selected>>,
