@@ -2,14 +2,14 @@ mod germany;
 mod russia;
 mod sweden;
 
-use std::f32::consts::PI;
+use std::{f32::consts::PI, time::Duration};
 
 use glam::{EulerRot, Quat, Vec2, Vec3, vec2, vec3};
 use paste::paste;
 use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
-use crate::math;
+use crate::formulas::vector_is_within_swept_angle;
 
 const SHIP_SPEED_SCALE: f32 = 5.2;
 
@@ -317,7 +317,7 @@ impl AngleRange {
     }
 
     pub fn contains(self, v: Vec2) -> bool {
-        math::vector_is_within_swept_angle(v, self.from, self.to)
+        vector_is_within_swept_angle(v, self.from, self.to)
     }
 
     /// Maintains the length of `v` but clamps its angle
@@ -401,7 +401,7 @@ impl TurretInstance {
 
 #[derive(Debug)]
 pub struct Torpedoes {
-    pub reload_secs: f32,
+    pub reload: Duration,
     pub volleys: usize,
     pub torps_per_volley: usize,
     /// Total radians of torpedo spread

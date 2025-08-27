@@ -104,6 +104,7 @@ pub enum Match2Client {
         id: SharedEntityId,
         ready_to_fire: usize,
         /// Remaining time until each volley is ready, in ascending order
+        /// (the next volley to be ready is at index 0)
         still_reloading: Vec<Duration>,
     },
     SetTrans {

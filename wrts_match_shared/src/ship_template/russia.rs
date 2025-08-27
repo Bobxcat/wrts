@@ -62,7 +62,7 @@ impl ShipTemplate {
                 },
             ],
             torpedoes: Some(Torpedoes {
-                reload_secs: 123.,
+                reload: Duration::from_secs_f64(123.),
                 volleys: 2,
                 torps_per_volley: 5,
                 spread: 10f32.to_radians(),

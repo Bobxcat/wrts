@@ -1,19 +1,12 @@
-use std::{collections::HashMap, time::Instant};
+use std::time::Duration;
 
-use bevy::{
-    log::{
-        Level,
-        tracing::{Instrument, span},
-    },
-    prelude::*,
-};
-use itertools::Itertools;
-use wrts_messaging::{Client2Match, ClientSharedInfo, Match2Client, Message, SharedEntityId};
+use bevy::prelude::*;
+use wrts_messaging::{Client2Match, ClientSharedInfo, Match2Client, Message};
 
 use crate::{
     AppState, Bullet, DetectionStatus, Health, MoveOrder, PlayerSettings, Team, Torpedo,
     networking::{ClientInfo, ServerConnection, ThisClient},
-    ship::{Ship, TurretState},
+    ship::{Ship, ShipModifiersDisplay, TurretState},
 };
 
 pub use shared_entity_tracking::SharedEntityTracking;
@@ -165,6 +158,7 @@ fn in_match_networking(
     mut commands: Commands,
     mut server: ResMut<ServerConnection>,
     mut shared_entities: ResMut<SharedEntityTracking>,
+    this_client: Res<ThisClient>,
 ) -> Option<()> {
     // Note: All network actions are queued instead of running of a query,
     // so that previous actions are flushed (i.e. creating a ship then updating that ship's position)
@@ -206,7 +200,15 @@ fn in_match_networking(
                             template: ship_base.to_template(),
                             turret_states,
                             reloaded_torp_volleys: 0,
-                            reloading_torp_volleys: vec![],
+                            reloading_torp_volleys_remaining_time: vec![
+                                Duration::ZERO;
+                                ship_base
+                                    .to_template()
+                                    .torpedoes
+                                    .as_ref()
+                                    .map(|t| t.volleys)
+                                    .unwrap_or(0)
+                            ],
                         },
                         DetectionStatus::Never,
                         Team(team),
@@ -218,6 +220,30 @@ fn in_match_networking(
                         },
                     ))
                     .id();
+
+                if Team(team).is_this_client(*this_client) {
+                    let _id = commands
+                        .spawn((
+                            StateScoped(AppState::InMatch),
+                            Node {
+                                position_type: PositionType::Absolute,
+                                width: Val::Auto,
+                                height: Val::Auto,
+                                border: UiRect::all(Val::Px(1.)),
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                ..default()
+                            },
+                            ShipModifiersDisplay {
+                                tracked_ship: local,
+                            },
+                            BackgroundColor(Color::linear_rgb(0.4, 0.4, 0.6)),
+                            BorderRadius::all(Val::Px(2.)),
+                        ))
+                        .id();
+                }
+
                 shared_entities.insert(id, local);
             }
             Message::Match2Client(Match2Client::SpawnBullet {
@@ -285,7 +311,7 @@ fn in_match_networking(
                     let mut entity = world.entity_mut(local);
                     let mut ship = entity.get_mut::<Ship>().unwrap();
                     ship.reloaded_torp_volleys = ready_to_fire;
-                    ship.reloading_torp_volleys = still_reloading;
+                    ship.reloading_torp_volleys_remaining_time = still_reloading;
                 });
             }
             Message::Match2Client(Match2Client::SetTrans { id, pos, rot }) => {

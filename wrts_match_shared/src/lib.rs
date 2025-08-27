@@ -1,6 +1,6 @@
 use glam::Vec2;
 
-pub mod math;
+pub mod formulas;
 pub mod ship_template;
 
 /// (lower_bound, higher_bound)

@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use itertools::Itertools;
+use std::cmp::Reverse;
 use std::io::stdin;
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::time::Duration;
@@ -555,16 +556,18 @@ fn send_health_updates(
 }
 
 fn send_torpedo_reload_updates(
-    ships: Query<(Entity, &Ship)>,
-    clients: Query<&ClientInfo>,
+    ships: Query<(Entity, &Ship, &Team)>,
     msgs_tx: Res<MessagesSend>,
     shared_entities: Res<SharedEntityTracking>,
 ) {
-    let clients = clients.iter().map(|cl| cl.info.id).collect_vec();
-    for (local, ship) in ships {
+    for (local, ship, ship_team) in ships {
         let Some(shared) = shared_entities.get_by_local(local) else {
             continue;
         };
+
+        if ship.template.torpedoes.is_none() {
+            continue;
+        }
 
         let timers = &ship.torpedo_reloads;
         let ready_to_fire = timers.iter().filter(|timer| timer.finished()).count();
@@ -574,15 +577,15 @@ fn send_torpedo_reload_updates(
             .sorted()
             .collect_vec();
 
-        for cl in clients.clone() {
-            msgs_tx.send(WrtsMatchMessage {
-                client: cl,
-                msg: Message::Match2Client(Match2Client::SetReloadedTorps {
-                    id: shared,
-                    ready_to_fire,
-                    still_reloading: still_reloading.clone(),
-                }),
-            })
-        }
+        assert_eq!(ready_to_fire + still_reloading.len(), timers.len());
+
+        msgs_tx.send(WrtsMatchMessage {
+            client: ship_team.0,
+            msg: Message::Match2Client(Match2Client::SetReloadedTorps {
+                id: shared,
+                ready_to_fire,
+                still_reloading: still_reloading.clone(),
+            }),
+        })
     }
 }

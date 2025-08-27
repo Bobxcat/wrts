@@ -24,7 +24,7 @@ use wrts_messaging::{Client2Match, ClientId, Message};
 use crate::{
     in_match::{InMatchPlugin, SharedEntityTracking},
     networking::{NetworkingPlugin, ServerConnection, ThisClient},
-    ship::{Ship, TurretState},
+    ship::{Ship, ShipDisplayPlugin, TurretState},
     ui::{in_game::InGameUIPlugin, lobby::LobbyUiPlugin},
 };
 
@@ -408,126 +408,6 @@ fn update_camera(
     camera.1.translation += (dir * 200. * zoom.0 * time.delta_secs()).extend(0.);
 }
 
-fn update_ship_displays(
-    mut gizmos: Gizmos,
-    ships: Query<(
-        &Team,
-        &Ship,
-        &mut Sprite,
-        &Transform,
-        Option<&Selected>,
-        &DetectionStatus,
-        &Health,
-    )>,
-    this_client: Res<ThisClient>,
-    settings: Res<PlayerSettings>,
-    zoom: Res<MapZoom>,
-) {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum DisplayType {
-        Accurate,
-        Simplified,
-    }
-    for (team, ship, mut sprite, trans, selected, detection_status, health) in ships {
-        let is_visible =
-            team.is_this_client(*this_client) || *detection_status == DetectionStatus::Detected;
-        let is_selected = selected.is_some();
-
-        let (display_type, sprite_size) = {
-            let simplified_size = vec2(1., 1.) * settings.ship_icon_scale * zoom.0;
-            let accurate_size = vec2(ship.template.hull.length, ship.template.hull.width);
-            if simplified_size.max_element() > accurate_size.max_element() {
-                (DisplayType::Simplified, simplified_size)
-            } else {
-                (DisplayType::Accurate, accurate_size)
-            }
-        };
-
-        // Turrets
-        if is_visible && display_type == DisplayType::Accurate {
-            let turrets = ship.template.turret_instances.as_slice();
-            for turret_idx in 0..turrets.len() {
-                let &TurretState { dir: dir_relative } = &ship.turret_states[turret_idx];
-                let dir_absolute = trans.rotation.to_euler(EulerRot::ZXY).0 + dir_relative;
-                let pos =
-                    turrets[turret_idx].absolute_pos(trans.translation.truncate(), trans.rotation);
-                let delta = Vec2::from_angle(dir_absolute) * 30.;
-                gizmos.arrow_2d(pos, pos + delta, Color::linear_rgb(0.8, 0.8, 0.8));
-            }
-        }
-
-        // HP bar
-        if *detection_status != DetectionStatus::Never {
-            let hp_bar_progress = (health.0 / ship.template.max_health) as f32;
-            let hp_bar_y = trans.translation.y - 30. * zoom.0;
-            let hp_bar_dims = vec2(35., 5.) * zoom.0;
-            let hp_bar_start = trans.translation.x - hp_bar_dims.x / 2.;
-            let hp_bar_end = trans.translation.x + hp_bar_dims.x / 2.;
-            let hp_bar_mid = hp_bar_start.lerp(hp_bar_end, hp_bar_progress);
-            gizmos.line_2d(
-                vec2(hp_bar_start, hp_bar_y),
-                vec2(hp_bar_mid, hp_bar_y),
-                Color::linear_rgb(0.9, 0.1, 0.1),
-            );
-            gizmos.line_2d(
-                vec2(hp_bar_mid, hp_bar_y),
-                vec2(hp_bar_end, hp_bar_y),
-                Color::linear_rgb(0.1, 0.1, 0.1),
-            );
-        }
-
-        if !team.is_this_client(*this_client) && *detection_status != DetectionStatus::Detected {
-            *sprite = Sprite::default();
-            continue;
-        } else {
-            let dim = match is_selected {
-                true => 0.7,
-                false => 1.0,
-            };
-            *sprite = Sprite::from_color(
-                Color::LinearRgba(
-                    settings
-                        .team_colors(*team, *this_client)
-                        .ship_color
-                        .to_linear()
-                        * dim,
-                )
-                .with_alpha(1.),
-                sprite_size,
-            );
-        }
-
-        if is_visible {
-            // Gun range circle
-            if let Some(t) = ship
-                .template
-                .turret_templates
-                .values()
-                .max_by_key(|t| OrderedFloat(t.max_range))
-            {
-                gizmos
-                    .circle_2d(
-                        Isometry2d::from_translation(trans.translation.truncate()),
-                        t.max_range,
-                        settings
-                            .team_colors(*team, *this_client)
-                            .gun_range_ring_color,
-                    )
-                    .resolution(128);
-            }
-
-            // Detection circle
-            gizmos
-                .circle_2d(
-                    Isometry2d::from_translation(trans.translation.truncate()),
-                    ship.template.detection,
-                    Color::linear_rgb(0.4, 0.4, 0.9),
-                )
-                .resolution(128);
-        }
-    }
-}
-
 fn update_selected_ship_orders_display(
     mut gizmos: Gizmos,
     ships_selected: Query<
@@ -762,6 +642,7 @@ pub fn run() {
         .add_plugins(LobbyUiPlugin)
         .add_plugins(NetworkingPlugin)
         .add_plugins(InMatchPlugin)
+        .add_plugins(ShipDisplayPlugin)
         //
         .init_resource::<PlayerSettings>()
         .init_resource::<CursorWorldPos>()
@@ -792,7 +673,6 @@ pub fn run() {
                 draw_background,
                 update_bullet_displays,
                 update_torpedo_displays,
-                update_ship_displays,
             )
                 .run_if(in_state(AppState::InMatch)),
         )

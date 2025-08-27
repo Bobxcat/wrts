@@ -70,9 +70,8 @@ impl Command for SpawnShipCommand {
                             .torpedoes
                             .iter()
                             .flat_map(|torps| {
-                                (0..torps.volleys).map(|_idx| {
-                                    Timer::from_seconds(torps.reload_secs, TimerMode::Repeating)
-                                })
+                                (0..torps.volleys)
+                                    .map(|_idx| Timer::new(torps.reload, TimerMode::Repeating))
                             })
                             .collect(),
                     },
