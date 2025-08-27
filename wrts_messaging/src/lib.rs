@@ -20,7 +20,6 @@ pub struct SharedEntityId(pub u64);
 
 impl std::fmt::Debug for SharedEntityId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // f.debug_tuple("SharedEntityId").field(&self.0).finish()
         write!(f, "shared{:x}", self.0)
     }
 }
@@ -322,14 +321,12 @@ mod serialize_maybe_sync_macro {
     macro_rules! maybe_sync_read_write {
         (read async $stream:ident, $buf:ident) => {
             tokio::io::AsyncReadExt::read_exact(&mut $stream, &mut $buf).await?;
-            // $stream.read_exact(&mut $buf).await?;
         };
         (read $stream:ident, $buf:ident) => {
             std::io::Read::read_exact(&mut $stream.x, &mut $buf)?;
         };
         (write async $stream:ident, $buf:ident) => {
             tokio::io::AsyncWriteExt::write_all(&mut $stream, &$buf).await?;
-            // $stream.write_all(&$buf).await?;
         };
         (write $stream:ident, $buf:ident) => {
             std::io::Write::write_all(&mut $stream.x, &$buf)?;
@@ -367,7 +364,6 @@ mod serialize_maybe_sync_macro {
                 let mut stream = TokioWebTransportCompat::<'a, T>::from(stream);
                 let length_prefix = {
                     let mut buf: [u8; 4] = [0; 4];
-                    // stream.read_exact(&mut buf).await?;
                     maybe_sync_read_write!(read $($async)? stream, buf);
                     u32::from_be_bytes(buf)
                 };
@@ -378,7 +374,6 @@ mod serialize_maybe_sync_macro {
                     ));
                 }
                 let mut data = vec![0u8; length_prefix as usize];
-                // stream.read_exact(&mut data).await?;
                 maybe_sync_read_write!(read $($async)? stream, data);
                 Ok(serde_json::from_slice(&data)?)
             }

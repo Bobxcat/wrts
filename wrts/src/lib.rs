@@ -105,8 +105,6 @@ struct MoveOrder {
     pub waypoints: Vec<Vec2>,
 }
 
-// struct RudderPos
-
 #[derive(Component, Debug, Clone)]
 struct FireTarget {
     ship: Entity,

@@ -146,7 +146,6 @@ impl WrtsMatchProcess {
 
         let stdin = process.stdin.take().unwrap();
         let stdout = process.stdout.take().unwrap();
-        // stdout.read
         Ok(Self {
             process,
             stdin,

@@ -402,5 +402,3 @@ fn in_match_networking_none_handler(
         next_state.set(AppState::ConnectingToServer);
     }
 }
-
-//
