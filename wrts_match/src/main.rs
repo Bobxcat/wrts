@@ -1,13 +1,10 @@
 use std::{
-    collections::HashMap,
     f32::consts::PI,
-    f64::consts::E,
     ops::{Index, IndexMut},
     time::Duration,
 };
 
 use bevy::{prelude::*, window::ExitCondition};
-use enum_map::EnumMap;
 use itertools::Itertools;
 use wrts_match_shared::ship_template::{AngleRange, Speed};
 use wrts_messaging::{ClientId, Match2Client, Message, WrtsMatchMessage};

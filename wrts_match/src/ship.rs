@@ -1,10 +1,8 @@
 use bevy::prelude::*;
 use rand_distr::Distribution;
-use wrts_match_shared::ship_template::{Dispersion, ShipTemplate, ShipTemplateId};
+use wrts_match_shared::ship_template::{Dispersion, ShipTemplate};
 
 use crate::{Health, Team, Velocity};
-
-const SHIP_SPEED_SCALE: f32 = 5.2;
 
 #[derive(Debug, Clone)]
 pub struct TurretState {

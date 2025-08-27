@@ -1,14 +1,8 @@
 use bevy::prelude::*;
 use itertools::Itertools;
 use wrts_match_shared::ship_template::{ShipTemplate, ShipTemplateId};
-use wrts_messaging::{Match2Client, Message, WrtsMatchMessage};
 
-use crate::{
-    Health, Team,
-    networking::{ClientInfo, MessagesSend, SharedEntityTracking},
-    ship::Ship,
-    spawn_entity::SpawnShipCommand,
-};
+use crate::{Health, Team, networking::ClientInfo, spawn_entity::SpawnShipCommand};
 
 pub fn initalize_game(mut commands: Commands, teams: Query<&ClientInfo>) {
     let teams: [&ClientInfo; 2] = teams

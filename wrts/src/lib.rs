@@ -18,13 +18,12 @@ use bevy::{
     window::PrimaryWindow,
 };
 use itertools::Itertools;
-use ordered_float::OrderedFloat;
 use wrts_messaging::{Client2Match, ClientId, Message};
 
 use crate::{
     in_match::{InMatchPlugin, SharedEntityTracking},
     networking::{NetworkingPlugin, ServerConnection, ThisClient},
-    ship::{Ship, ShipDisplayPlugin, TurretState},
+    ship::{Ship, ShipDisplayPlugin},
     ui::{in_game::InGameUIPlugin, lobby::LobbyUiPlugin},
 };
 

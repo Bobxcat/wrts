@@ -6,11 +6,7 @@ use std::{
     sync::{LazyLock, Mutex, OnceLock},
 };
 
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    process::{Child, ChildStdin, ChildStdout, Command},
-    task::JoinHandle,
-};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tracing::error;
 
 fn ctrlc_handler() {

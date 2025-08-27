@@ -1,6 +1,5 @@
 use bevy::prelude::*;
 use itertools::Itertools;
-use std::cmp::Reverse;
 use std::io::stdin;
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::time::Duration;
@@ -8,8 +7,7 @@ use std::{collections::HashMap, io::Write, ops::Deref};
 use wrts_messaging::{Client2Match, Match2Client, Message, SharedEntityId, WrtsMatchMessage};
 
 use wrts_messaging::{
-    ClientId, ClientSharedInfo, RecvFromStream, WrtsMatchInitMessage, read_from_stream_sync,
-    write_to_stream_sync,
+    ClientId, ClientSharedInfo, RecvFromStream, WrtsMatchInitMessage, write_to_stream_sync,
 };
 
 use crate::detection::{BaseDetection, DetectionStatus};
@@ -111,7 +109,7 @@ impl Deref for MessagesRecv {
 }
 
 mod shared_entity_tracking {
-    use std::{collections::HashMap, ops::Index};
+    use std::collections::HashMap;
 
     use bevy::ecs::{entity::Entity, resource::Resource};
     use slotmap::{KeyData, SlotMap};
@@ -387,7 +385,7 @@ impl Command for LaunchTorpedoVolleyCommand {
             );
             return;
         };
-        let Some((volley_idx, volley_timer)) = ship
+        let Some((_volley_idx, volley_timer)) = ship
             .torpedo_reloads
             .iter_mut()
             .enumerate()

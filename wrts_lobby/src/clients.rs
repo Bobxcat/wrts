@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, LazyLock},
-};
+use std::{collections::HashMap, sync::LazyLock};
 
 use tokio::sync::{Mutex, broadcast};
 use wrts_messaging::{ClientId, ClientSharedInfo};

@@ -1,10 +1,8 @@
-use std::{cmp::Reverse, f32::consts::E, time::Duration};
+use std::time::Duration;
 
 use bevy::{prelude::*, window::PrimaryWindow};
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
-use rand::Fill;
-use rand_distr::Distribution;
 use wrts_match_shared::ship_template::ShipTemplate;
 
 use crate::{
@@ -116,13 +114,10 @@ fn update_torpedo_reload_display(
                                 children![
                                     Node {
                                         position_type: PositionType::Absolute,
-
-                                        // bottom: Val::Percent(100.),
                                         width,
                                         height: Val::Percent(100.),
                                         ..default()
                                     },
-                                    // bevy::sprite::Anchor::BottomLeft,
                                     ImageNode::default(),
                                 ],
                             ))

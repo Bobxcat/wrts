@@ -1,13 +1,9 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use itertools::Itertools;
 use slotmap::SlotMap;
 use tokio::sync::{Mutex, mpsc};
-use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, error, info_span, warn};
+use tracing::{Instrument, info_span, warn};
 use wrts_messaging::{
     ClientId, Message, RecvFromStream, SendToStream, WrtsMatchInitMessage, WrtsMatchMessage,
 };

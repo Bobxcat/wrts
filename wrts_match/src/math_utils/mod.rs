@@ -1,12 +1,7 @@
 //! Important math functions
 mod generated_bullet_problem_solution;
 
-use bevy::{
-    math::{DVec2, dvec3},
-    prelude::*,
-};
-use itertools::Itertools;
-use num_complex::{Complex, ComplexFloat};
+use bevy::{math::dvec3, prelude::*};
 
 /// Returns the angle, in radians from the ground, that a bullet needs to be fired from to arrive at the given distance from its origin
 pub fn gun_angle_for_distance(

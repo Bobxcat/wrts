@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::{Result, anyhow};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, debug, error, info, info_span, level_filters::LevelFilter, warn};
+use tracing::{Instrument, debug, info, info_span, level_filters::LevelFilter, warn};
 use tracing_subscriber::EnvFilter;
 use wrts_messaging::{
     Client2Lobby, ClientId, ClientSharedInfo, Lobby2Client, Message, RecvFromStream, SendToStream,
@@ -113,7 +113,7 @@ async fn handle_connection_inner(
         );
         clients.send(ClientsEvent::ClientJoined { id: client_id });
         // Note: this loop includes _this_ client
-        for (&cl_id, cl_data) in &clients.id2info {
+        for (&_cl_id, cl_data) in &clients.id2info {
             Message::Lobby2Client(Lobby2Client::ClientJoined {
                 info: cl_data.info.clone(),
             })

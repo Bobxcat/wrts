@@ -1,10 +1,6 @@
 //! Important math functions
 
-use bevy::{
-    math::{DVec2, dvec3},
-    prelude::*,
-};
-use itertools::Itertools;
+use bevy::{math::DVec2, prelude::*};
 use num_complex::{Complex, ComplexFloat};
 
 /// Returns the angle, in radians from the ground, that a bullet needs to be fired from to arrive at the given distance from its origin
