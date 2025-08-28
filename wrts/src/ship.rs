@@ -1,7 +1,7 @@
-use std::time::Duration;
+use std::{cell::Cell, time::Duration};
 
 use bevy::{prelude::*, window::PrimaryWindow};
-use itertools::Itertools;
+use itertools::{Itertools, iproduct};
 use ordered_float::OrderedFloat;
 use wrts_match_shared::ship_template::ShipTemplate;
 
@@ -24,9 +24,14 @@ impl Plugin for ShipDisplayPlugin {
         .add_systems(
             Update,
             (
-                (update_torpedo_reload_display).before(sort_ship_modifiers_display),
-                sort_ship_modifiers_display.before(update_ship_modifiers_display_position),
-                update_ship_modifiers_display_position,
+                destroy_dead_ship_uis,
+                // UI element updaters
+                (update_torpedo_reload_display)
+                    .after(destroy_dead_ship_uis)
+                    .before(sort_ship_modifiers_display),
+                // ...
+                sort_ship_modifiers_display,
+                update_ship_ui_position,
                 update_ship_sprites,
             )
                 .in_set(ShipDisplaySystem),
@@ -50,9 +55,18 @@ pub struct Ship {
     /// in ascending order
     pub reloading_torp_volleys_remaining_time: Vec<Duration>,
 }
+#[derive(Component, Debug)]
+#[require(Node)]
+pub struct ShipUI {
+    pub tracked_ship: Entity,
+}
+
+#[derive(Component, Debug)]
+#[require(Text)]
+pub struct ShipNameTag;
 
 #[derive(Component, Debug, Clone, Copy)]
-#[require(Transform, Node)]
+#[require(Node)]
 pub struct ShipModifiersDisplay {
     pub tracked_ship: Entity,
 }
@@ -99,27 +113,24 @@ fn update_torpedo_reload_display(
                 let id = commands.spawn(TorpedoReloadDisplay).id();
                 let c = (0..torps.volleys)
                     .map(|_| {
-                        let width = Val::Px(total_sprite_size.x);
-                        let height = Val::Px(total_sprite_size.y);
                         commands
                             .spawn((
                                 Node {
-                                    width,
-                                    height,
+                                    width: Val::Px(total_sprite_size.x),
+                                    height: Val::Px(total_sprite_size.y),
                                     margin: UiRect::all(Val::Px(3.)),
                                     ..default()
                                 },
                                 TorpedoReloadDisplayTorpedoStatus,
                                 ImageNode::default(),
-                                children![
+                                children![(
                                     Node {
-                                        position_type: PositionType::Absolute,
-                                        width,
+                                        width: Val::Percent(100.),
                                         height: Val::Percent(100.),
                                         ..default()
                                     },
                                     ImageNode::default(),
-                                ],
+                                )],
                             ))
                             .id()
                     })
@@ -155,7 +166,7 @@ fn update_torpedo_reload_display(
             let is_reloaded = ship.reloaded_torp_volleys > i;
             let bar_loading = Color::linear_rgb(0.6, 0.1, 0.1);
             let bar_grey = Color::linear_rgb(0.1, 0.1, 0.1);
-            let bar_loaded = Color::linear_rgb(0.9, 0.1, 0.1);
+            let bar_loaded = Color::linear_rgb(0.1, 0.4, 0.8);
             match is_reloaded {
                 true => {
                     *torp_status_bottom_layer =
@@ -174,18 +185,18 @@ fn update_torpedo_reload_display(
                         ImageNode::solid_color(bar_grey).with_mode(NodeImageMode::Stretch);
                     torp_status_top_layer_node.height =
                         Val::Percent((100. * cutoff_lerp).clamp(0., 100.));
-                    torp_status_top_layer_node.width = Val::Px(total_sprite_size.x);
+                    // torp_status_top_layer_node.width = Val::Px(total_sprite_size.x);
                 }
             }
         }
     }
 }
 
-fn update_ship_modifiers_display_position(
+fn update_ship_ui_position(
     camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     window: Query<&Window, With<PrimaryWindow>>,
     ships: Query<&Transform>,
-    ship_modifiers_displays: Query<(&ShipModifiersDisplay, &mut Node, &ComputedNode)>,
+    ship_modifiers_displays: Query<(&ShipUI, &mut Node, &ComputedNode)>,
 ) {
     let Ok((camera, camera_trans)) = camera.single() else {
         return;
@@ -205,14 +216,27 @@ fn update_ship_modifiers_display_position(
             disp_computed_node.content_size() * camera.target_scaling_factor().unwrap_or(1.);
 
         disp_node.left = Val::Px(pos.x - content_size.x / 2.);
-        disp_node.bottom = Val::Px(window.height() - pos.y - 30. - content_size.y / 2.);
+        disp_node.top = Val::Px(pos.y + 20.);
+        // disp_node.bottom = Val::Px(window.height() - pos.y - 30. - content_size.y / 2.);
+    }
+}
+
+fn destroy_dead_ship_uis(
+    mut commands: Commands,
+    ship_uis: Query<(Entity, &ShipUI)>,
+    ships: Query<(), With<Ship>>,
+) {
+    for (ship_ui_entity, ship_ui) in ship_uis {
+        if !ships.contains(ship_ui.tracked_ship) {
+            commands.entity(ship_ui_entity).despawn();
+        }
     }
 }
 
 /// Sort all existing modifier displays
 fn sort_ship_modifiers_display(
     mut commands: Commands,
-    ships: Query<(Entity, &Team)>,
+    ships: Query<(Entity, &Team), With<Ship>>,
     ship_modifiers_displays: Query<(Entity, &ShipModifiersDisplay, &Children)>,
     torpedo_reload_displays: Query<(), With<TorpedoReloadDisplay>>,
     this_client: Res<ThisClient>,
@@ -240,12 +264,6 @@ fn sort_ship_modifiers_display(
         commands
             .entity(disp_entity)
             .replace_children(&children_ordered);
-    }
-
-    for (disp_entity, disp, _) in ship_modifiers_displays {
-        if !ships.contains(disp.tracked_ship) {
-            commands.entity(disp_entity).despawn();
-        }
     }
 }
 
@@ -284,6 +302,24 @@ fn update_ship_sprites(
             }
         };
 
+        let sprite_bounds = {
+            let rot = Vec2::from_angle(trans.rotation.to_euler(EulerRot::ZYX).0);
+            let corners = iproduct!([-1., 1.], [-1., 1.])
+                .map(|(x, y)| rot.rotate(0.5 * sprite_size * vec2(x, y)))
+                .collect_vec();
+            assert_eq!(corners.len(), 4);
+
+            let mut max = corners[0];
+            let mut min = corners[0];
+
+            for c in corners {
+                max = max.max(c);
+                min = min.min(c);
+            }
+
+            Rect::from_corners(max, min)
+        };
+
         // Turrets
         if is_visible && display_type == DisplayType::Accurate {
             let turrets = ship.template.turret_instances.as_slice();
@@ -298,9 +334,9 @@ fn update_ship_sprites(
         }
 
         // HP bar
-        if *detection_status != DetectionStatus::Never {
+        if team.is_this_client(*this_client) || *detection_status != DetectionStatus::Never {
             let hp_bar_progress = (health.0 / ship.template.max_health) as f32;
-            let hp_bar_y = trans.translation.y - 30. * zoom.0;
+            let hp_bar_y = trans.translation.y + 0.5 * sprite_bounds.height() + 3. * zoom.0;
             let hp_bar_dims = vec2(35., 5.) * zoom.0;
             let hp_bar_start = trans.translation.x - hp_bar_dims.x / 2.;
             let hp_bar_end = trans.translation.x + hp_bar_dims.x / 2.;

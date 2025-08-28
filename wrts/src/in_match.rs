@@ -6,7 +6,7 @@ use wrts_messaging::{Client2Match, ClientSharedInfo, Match2Client, Message};
 use crate::{
     AppState, Bullet, DetectionStatus, Health, MoveOrder, PlayerSettings, Team, Torpedo,
     networking::{ClientInfo, ServerConnection, ThisClient},
-    ship::{Ship, ShipModifiersDisplay, TurretState},
+    ship::{Ship, ShipModifiersDisplay, ShipUI, TurretState},
 };
 
 pub use shared_entity_tracking::SharedEntityTracking;
@@ -193,6 +193,7 @@ fn in_match_networking(
                     }
                     turret_states
                 };
+                // Spawn the ship
                 let local = commands
                     .spawn((
                         StateScoped(AppState::InMatch),
@@ -221,28 +222,48 @@ fn in_match_networking(
                     ))
                     .id();
 
-                if Team(team).is_this_client(*this_client) {
-                    let _id = commands
-                        .spawn((
-                            StateScoped(AppState::InMatch),
+                // Spawn the ship ui tracking this ship
+                commands
+                    .spawn((
+                        StateScoped(AppState::InMatch),
+                        ShipUI {
+                            tracked_ship: local,
+                        },
+                        Node {
+                            position_type: PositionType::Absolute,
+                            flex_direction: FlexDirection::Column,
+                            ..default()
+                        },
+                        BackgroundColor(Color::linear_rgba(0.4, 0.4, 0.6, 0.6)),
+                        BorderRadius::all(Val::Px(5.)),
+                    ))
+                    .with_children(|commands| {
+                        commands.spawn((
+                            crate::ship::ShipNameTag,
                             Node {
-                                position_type: PositionType::Absolute,
-                                width: Val::Auto,
-                                height: Val::Auto,
-                                border: UiRect::all(Val::Px(1.)),
-                                flex_direction: FlexDirection::Row,
+                                border: UiRect::all(Val::Px(2.)),
                                 align_items: AlignItems::Center,
                                 justify_content: JustifyContent::Center,
                                 ..default()
                             },
-                            ShipModifiersDisplay {
-                                tracked_ship: local,
-                            },
-                            BackgroundColor(Color::linear_rgb(0.4, 0.4, 0.6)),
-                            BorderRadius::all(Val::Px(2.)),
-                        ))
-                        .id();
-                }
+                            Text(ship_base.to_name().to_string()),
+                        ));
+
+                        if Team(team).is_this_client(*this_client) {
+                            commands.spawn((
+                                ShipModifiersDisplay {
+                                    tracked_ship: local,
+                                },
+                                Node {
+                                    border: UiRect::all(Val::Px(1.)),
+                                    flex_direction: FlexDirection::Row,
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::Center,
+                                    ..default()
+                                },
+                            ));
+                        }
+                    });
 
                 shared_entities.insert(id, local);
             }
