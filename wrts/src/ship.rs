@@ -307,7 +307,6 @@ fn update_ship_sprites(
             let corners = iproduct!([-1., 1.], [-1., 1.])
                 .map(|(x, y)| rot.rotate(0.5 * sprite_size * vec2(x, y)))
                 .collect_vec();
-            assert_eq!(corners.len(), 4);
 
             let mut max = corners[0];
             let mut min = corners[0];
