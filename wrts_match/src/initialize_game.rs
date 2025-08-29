@@ -22,6 +22,7 @@ pub fn initalize_game(mut commands: Commands, teams: Query<&ClientInfo>) {
             ShipTemplateId::oland(),
             ShipTemplateId::bismarck(),
             ShipTemplateId::kiev(),
+            ShipTemplateId::nagato(),
         ];
         for ship_idx in 0..ships.len() {
             let offset_side = if ship_idx % 2 == 0 { -1. } else { 1. };

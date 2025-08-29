@@ -5,6 +5,7 @@ use crate::ship_template::*;
 impl ShipTemplate {
     /// https://en.wikipedia.org/wiki/Kiev-class_destroyer
     pub(super) fn kiev() -> ShipTemplate {
+        let ship_template = ShipTemplateId::kiev();
         let mut turret_templates = SlotMap::default();
         let main_battery = turret_templates.insert(TurretTemplate {
             reload_secs: 5.,
@@ -18,14 +19,16 @@ impl ShipTemplate {
             },
             turn_rate: AngularSpeed::from_halfturn(18.),
             barrel_count: 2,
+            // Estimated distance
             barrel_spacing: 1.,
         });
         ShipTemplate {
-            id: ShipTemplateId::kiev(),
+            id: ship_template,
             ship_class: ShipClass::Destroyer,
             hull: Hull {
                 length: 127.8,
                 width: 11.7,
+                // Estimated distance
                 freeboard: 5.,
                 draft: 4.2,
             },
@@ -37,24 +40,27 @@ impl ShipTemplate {
             turret_templates,
             turret_instances: vec![
                 TurretInstance {
-                    ship_template: ShipTemplateId::kiev(),
+                    ship_template,
                     template: main_battery,
+                    // Estimated distance
                     location_on_ship: HullLocation::new_l(HullLocationAxis::FromCenter(-50.)),
                     movement_angle: Some(AngleRange::from_angles_deg(25., -25.)),
                     firing_angle: None,
                     default_dir: PI,
                 },
                 TurretInstance {
-                    ship_template: ShipTemplateId::kiev(),
+                    ship_template,
                     template: main_battery,
+                    // Estimated distance
                     location_on_ship: HullLocation::new_l(HullLocationAxis::FromCenter(40.)),
                     movement_angle: Some(AngleRange::from_angles_deg(-155., 155.)),
                     firing_angle: None,
                     default_dir: 0.,
                 },
                 TurretInstance {
-                    ship_template: ShipTemplateId::kiev(),
+                    ship_template,
                     template: main_battery,
+                    // Estimated distance
                     location_on_ship: HullLocation::new_l(HullLocationAxis::FromCenter(50.)),
                     movement_angle: Some(AngleRange::from_angles_deg(-155., 155.)),
                     firing_angle: None,

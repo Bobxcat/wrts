@@ -5,6 +5,7 @@ use crate::ship_template::*;
 impl ShipTemplate {
     /// https://en.wikipedia.org/wiki/HSwMS_%C3%96land_(J16)
     pub(super) fn oland() -> ShipTemplate {
+        let ship_template = ShipTemplateId::oland();
         let mut turret_templates = SlotMap::default();
         let main_battery = turret_templates.insert(TurretTemplate {
             reload_secs: 2.3,
@@ -18,14 +19,16 @@ impl ShipTemplate {
             },
             turn_rate: AngularSpeed::from_halfturn(18.),
             barrel_count: 2,
+            // Estimated distance
             barrel_spacing: 1.,
         });
         ShipTemplate {
-            id: ShipTemplateId::oland(),
+            id: ship_template,
             ship_class: ShipClass::Destroyer,
             hull: Hull {
                 length: 112.,
                 width: 11.2,
+                // Estimated distance
                 freeboard: 4.,
                 draft: 3.4,
             },
@@ -37,16 +40,18 @@ impl ShipTemplate {
             turret_templates,
             turret_instances: vec![
                 TurretInstance {
-                    ship_template: ShipTemplateId::oland(),
+                    ship_template,
                     template: main_battery,
+                    // Estimated distance
                     location_on_ship: HullLocation::new_l(HullLocationAxis::FromCenter(-40.)),
                     movement_angle: None,
                     firing_angle: Some(AngleRange::from_angles_deg(25., -25.)),
                     default_dir: PI,
                 },
                 TurretInstance {
-                    ship_template: ShipTemplateId::oland(),
+                    ship_template,
                     template: main_battery,
+                    // Estimated distance
                     location_on_ship: HullLocation::new_l(HullLocationAxis::FromCenter(40.)),
                     movement_angle: None,
                     firing_angle: Some(AngleRange::from_angles_deg(-155., 155.)),

@@ -1,4 +1,5 @@
 mod germany;
+mod japan;
 mod russia;
 mod sweden;
 
@@ -157,7 +158,16 @@ macro_rules! make_ship_template_ids {
     };
 }
 
-make_ship_template_ids!(oland bismarck kiev);
+make_ship_template_ids! {
+    bismarck
+
+    kiev
+
+    nagato
+    // north_carolina
+
+    oland
+}
 
 impl ShipTemplate {
     pub fn from_name(name: &str) -> Option<&'static Self> {
@@ -219,7 +229,7 @@ impl HullLocationAxis {
             HullLocationAxis::Centered => 0.,
             HullLocationAxis::FromCenter(x) => x,
             HullLocationAxis::FromMin(x) => x - 0.5 * hull_length,
-            HullLocationAxis::FromMax(x) => hull_length - x,
+            HullLocationAxis::FromMax(x) => 0.5 * hull_length - x,
         }
     }
 }
