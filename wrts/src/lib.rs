@@ -100,7 +100,10 @@ fn update_cursor_world_pos(
     }
 }
 
-#[derive(Debug, Default, Component, Clone)]
+#[derive(Component, Debug, Default, Clone)]
+struct Velocity(pub Vec2);
+
+#[derive(Component, Debug, Default, Clone)]
 struct MoveOrder {
     pub waypoints: Vec<Vec2>,
 }
@@ -170,11 +173,14 @@ struct TorpedoReloadText;
 fn fire_torpedoes(
     mut gizmos: Gizmos,
     selected: Query<(Entity, &Ship, &Transform), With<Selected>>,
+    ships: Query<(&Team, &Transform, &Velocity), With<Ship>>,
     cursor_pos: Res<CursorWorldPos>,
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     shared_entities: Res<SharedEntityTracking>,
     mut server: ResMut<ServerConnection>,
+    this_client: Res<ThisClient>,
+    zoom: Res<MapZoom>,
 ) {
     let Ok((selected, selected_ship, selected_trans)) = selected.single() else {
         return;
@@ -193,6 +199,27 @@ fn fire_torpedoes(
     let angles_color = Color::linear_rgb(0.1, 0.4, 0.8);
     let min_dist = 100.;
     let max_dist = torps.range;
+
+    for (ship_team, ship_trans, ship_vel) in ships {
+        if ship_team.is_this_client(*this_client) {
+            continue;
+        }
+
+        let Some(res) = math_utils::torpedo_problem(
+            selected_trans.translation.truncate(),
+            ship_trans.translation.truncate(),
+            ship_vel.0,
+            torps.speed.mps() as f64,
+        ) else {
+            continue;
+        };
+
+        gizmos.cross_2d(
+            Isometry2d::from_translation(res.intersection_point),
+            10. * zoom.0,
+            Color::linear_rgb(0.4, 0.5, 0.5),
+        );
+    }
 
     for angle_range in firing_angles {
         let iso = Isometry2d::new(
@@ -216,26 +243,25 @@ fn fire_torpedoes(
         );
     }
 
-    let Some(fire_dir) = (cursor_pos.0 - ship_pos).try_normalize() else {
-        return;
-    };
-    let is_valid_angle = firing_angles
-        .into_iter()
-        .any(|angle_range| angle_range.contains(fire_dir));
-    if is_valid_angle {
-        gizmos.line_2d(
-            ship_pos + fire_dir * min_dist,
-            ship_pos + fire_dir * max_dist,
-            angles_color,
-        );
+    if let Some(fire_dir) = (cursor_pos.0 - ship_pos).try_normalize() {
+        let is_valid_angle = firing_angles
+            .into_iter()
+            .any(|angle_range| angle_range.contains(fire_dir));
+        if is_valid_angle {
+            gizmos.line_2d(
+                ship_pos + fire_dir * min_dist,
+                ship_pos + fire_dir * max_dist,
+                angles_color,
+            );
 
-        if mouse.just_pressed(MouseButton::Right) && only_modifier_keys_pressed(&keyboard, []) {
-            let _ = server.send(Message::Client2Match(Client2Match::LaunchTorpedoVolley {
-                ship: shared_entities[selected],
-                dir: fire_dir,
-            }));
+            if mouse.just_pressed(MouseButton::Right) && only_modifier_keys_pressed(&keyboard, []) {
+                let _ = server.send(Message::Client2Match(Client2Match::LaunchTorpedoVolley {
+                    ship: shared_entities[selected],
+                    dir: fire_dir,
+                }));
+            }
         }
-    }
+    };
 }
 
 fn update_torpedo_displays(

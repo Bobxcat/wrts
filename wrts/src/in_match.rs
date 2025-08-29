@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use wrts_messaging::{Client2Match, ClientSharedInfo, Match2Client, Message};
 
 use crate::{
-    AppState, Bullet, DetectionStatus, Health, MoveOrder, PlayerSettings, Team, Torpedo,
+    AppState, Bullet, DetectionStatus, Health, MoveOrder, PlayerSettings, Team, Torpedo, Velocity,
     networking::{ClientInfo, ServerConnection, ThisClient},
     ship::{Ship, ShipModifiersDisplay, ShipUI, TurretState},
 };
@@ -345,6 +345,17 @@ fn in_match_networking(
                     let mut trans = entity.get_mut::<Transform>().unwrap();
                     trans.translation = pos;
                     trans.rotation = rot;
+                });
+            }
+            Message::Match2Client(Match2Client::SetVelocity { id, vel }) => {
+                commands.queue(move |world: &mut World| {
+                    let Some(local) = world.resource::<SharedEntityTracking>().get_by_shared(id)
+                    else {
+                        return;
+                    };
+                    let mut entity = world.entity_mut(local);
+                    entity.insert(Velocity(vel));
+                    //
                 });
             }
             Message::Match2Client(Match2Client::SetTurretDirs { id, turret_dirs }) => {

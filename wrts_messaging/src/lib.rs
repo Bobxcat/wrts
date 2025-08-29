@@ -111,6 +111,10 @@ pub enum Match2Client {
         pos: Vec3,
         rot: Quat,
     },
+    SetVelocity {
+        id: SharedEntityId,
+        vel: Vec2,
+    },
     SetTurretDirs {
         id: SharedEntityId,
         turret_dirs: Vec<f32>,

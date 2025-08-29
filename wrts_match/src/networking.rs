@@ -24,6 +24,7 @@ impl Plugin for NetworkingPlugin {
             (
                 read_messages,
                 send_transform_updates,
+                send_velocity_updates,
                 send_turret_state_updates,
                 send_health_updates,
                 send_torpedo_reload_updates,
@@ -497,6 +498,37 @@ fn send_transform_updates(
                     id: shared,
                     pos: trans.translation,
                     rot: trans.rotation,
+                }),
+            });
+        }
+    }
+}
+
+fn send_velocity_updates(
+    transforms: Query<(Entity, &Velocity, Option<(&DetectionStatus, &Team)>), Changed<Transform>>,
+    clients: Query<&ClientInfo>,
+    msgs_tx: Res<MessagesSend>,
+    shared_entities: Res<SharedEntityTracking>,
+) {
+    let clients = clients.iter().map(|cl| cl.info.id).collect_vec();
+    for (local, vel, detection) in transforms {
+        let clients_to_update: Vec<ClientId>;
+        if let Some((detection, team)) = detection
+            && !detection.is_detected
+        {
+            clients_to_update = vec![team.0];
+        } else {
+            clients_to_update = clients.clone();
+        }
+        let Some(shared) = shared_entities.get_by_local(local) else {
+            continue;
+        };
+        for cl in clients_to_update {
+            msgs_tx.send(WrtsMatchMessage {
+                client: cl,
+                msg: Message::Match2Client(Match2Client::SetVelocity {
+                    id: shared,
+                    vel: vel.0.truncate(),
                 }),
             });
         }
