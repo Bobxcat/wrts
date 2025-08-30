@@ -36,14 +36,10 @@ fn detector_detects_detectee(
 
     pos: Vec2,
     base_detection: f32,
+    base_detection_when_firing_through_smoke: f32,
     detection_increased_by_firing: Option<f32>,
     smoke_puffs: Query<(&SmokePuff, &Transform)>,
 ) -> bool {
-    let mut detection = base_detection;
-    if let Some(firing_range) = detection_increased_by_firing {
-        detection = detection.max(firing_range);
-    }
-
     let blocked_by_smoke = math_utils::cast_line_segment(
         detector_pos,
         pos,
@@ -56,8 +52,15 @@ fn detector_detects_detectee(
     )
     .is_some();
 
-    if blocked_by_smoke {
-        detection = 4_000.;
+    let mut detection = base_detection;
+    if let Some(firing_range) = detection_increased_by_firing {
+        if blocked_by_smoke {
+            detection = base_detection_when_firing_through_smoke;
+        } else {
+            detection = firing_range;
+        }
+    } else if blocked_by_smoke {
+        detection = 2_000.;
     }
 
     detector_pos.distance(pos) <= detection
@@ -105,6 +108,10 @@ fn update_detection(
             None => true,
         };
 
+        let base_detection_when_firing_through_smoke = detectee_is_ship
+            .map(|ship| ship.template.detection_when_firing_through_smoke)
+            .unwrap_or(1_000_000.);
+
         detectee_status.is_detected = detectors.iter().any(|(detector_team, detector_trans)| {
             if detector_team == detectee_team {
                 return false;
@@ -113,6 +120,7 @@ fn update_detection(
                 detector_trans.translation.truncate(),
                 detectee_trans.translation.truncate(),
                 base_detection.0,
+                base_detection_when_firing_through_smoke,
                 detection_increased_by_firing
                     .then_some(detectee_status.detection_increased_by_firing_at_range),
                 smoke_puffs,

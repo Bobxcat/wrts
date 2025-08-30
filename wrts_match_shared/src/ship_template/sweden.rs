@@ -37,6 +37,7 @@ impl ShipTemplate {
             turning_rate: AngularSpeed::from_radps(0.45),
             max_health: 14_100.,
             detection: 7_200.,
+            detection_when_firing_through_smoke: 2_700.,
             turret_templates,
             turret_instances: vec![
                 TurretInstance {

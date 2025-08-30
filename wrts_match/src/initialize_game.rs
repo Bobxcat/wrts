@@ -37,10 +37,4 @@ pub fn initalize_game(mut commands: Commands, teams: Query<&ClientInfo>) {
             });
         }
     }
-
-    commands.queue(crate::spawn_entity::SpawnSmokePuffCommand {
-        pos: vec2(0., 0.),
-        radius: 2_000.,
-        dissapation: std::time::Duration::from_secs(20),
-    });
 }

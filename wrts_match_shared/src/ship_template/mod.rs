@@ -82,6 +82,7 @@ pub struct ShipTemplate {
     // pub rudder_acceleration: f32,
     pub max_health: f64,
     pub detection: f32,
+    pub detection_when_firing_through_smoke: f32,
     pub turret_templates: SlotMap<TurretTemplateId, TurretTemplate>,
     pub turret_instances: Vec<TurretInstance>,
     pub torpedoes: Option<Torpedoes>,
