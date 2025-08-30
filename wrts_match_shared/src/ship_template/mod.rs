@@ -10,7 +10,7 @@ use paste::paste;
 use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
-use crate::formulas::vector_is_within_swept_angle;
+use crate::{formulas::vector_is_within_swept_angle, ship_template::consumables::Consumables};
 
 const SHIP_SPEED_SCALE: f32 = 5.2;
 
@@ -85,6 +85,7 @@ pub struct ShipTemplate {
     pub turret_templates: SlotMap<TurretTemplateId, TurretTemplate>,
     pub turret_instances: Vec<TurretInstance>,
     pub torpedoes: Option<Torpedoes>,
+    pub consumables: Consumables,
 }
 
 /// A unique numerical identifier for each ship template,
@@ -424,7 +425,68 @@ pub struct Torpedoes {
 
 impl Torpedoes {
     pub fn starboard_firing_angle(&self) -> AngleRange {
+        // let f = ;
         let port = self.port_firing_angle;
         AngleRange::from_vectors(vec2(port.to.x, -port.to.y), vec2(port.from.x, -port.from.y))
     }
+}
+
+pub mod consumables {
+    use std::{num::NonZeroUsize, time::Duration};
+
+    use paste::paste;
+
+    #[derive(Debug, Clone)]
+    pub struct Smoke {
+        pub action_time: Duration,
+        pub dissapation: Duration,
+        pub radius: f32,
+        pub cooldown: Duration,
+        /// Zero if infinite charges
+        pub charges: usize,
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct SpotterPlane {
+        pub action_time: Duration,
+        pub cooldown: Duration,
+        /// Zero if infinite charges
+        pub charges: usize,
+    }
+
+    macro_rules! make_consumables_struct {
+        ($($consumable_type:ident)*) => {
+            paste! {
+                /// Contains information about the base consumables a ship has access to
+                #[derive(Debug, Clone)]
+                pub struct Consumables {
+                    $([<$consumable_type:snake>] : Option<$consumable_type>),*
+                }
+            }
+
+            impl Consumables {
+                pub fn new() -> Self {
+                    paste! {
+                        Self {
+                            $([<$consumable_type:snake>]: None),*
+                        }
+                    }
+                }
+
+                $(paste! {
+                    pub fn [<$consumable_type:snake>](&self) -> Option<&$consumable_type> {
+                        self.[<$consumable_type:snake>].as_ref()
+                    }
+
+
+                    pub fn [<with_ $consumable_type:snake>](mut self, [<$consumable_type:snake>]: $consumable_type) -> Self {
+                        self.[<$consumable_type:snake>] = Some([<$consumable_type:snake>]);
+                        self
+                    }
+                })*
+            }
+        };
+    }
+
+    make_consumables_struct!(Smoke SpotterPlane);
 }

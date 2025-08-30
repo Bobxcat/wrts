@@ -1,6 +1,6 @@
 use std::f32::consts::PI;
 
-use crate::ship_template::*;
+use crate::ship_template::{consumables::Smoke, *};
 
 impl ShipTemplate {
     /// https://en.wikipedia.org/wiki/Kiev-class_destroyer
@@ -76,6 +76,13 @@ impl ShipTemplate {
                 speed: Speed::from_kts(60. * SHIP_SPEED_SCALE),
                 range: 7_000.,
                 port_firing_angle: AngleRange::from_angles_deg(40., 140.),
+            }),
+            consumables: Consumables::new().with_smoke(Smoke {
+                action_time: Duration::from_secs(10),
+                dissapation: Duration::from_secs(40),
+                radius: 2_000.,
+                cooldown: Duration::from_secs(30),
+                charges: 3,
             }),
         }
     }

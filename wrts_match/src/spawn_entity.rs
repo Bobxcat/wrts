@@ -1,3 +1,6 @@
+//! Custom commands that spawn entities and
+//! update clients accordingly
+
 use std::time::Duration;
 
 use bevy::prelude::*;
@@ -6,10 +9,10 @@ use wrts_match_shared::ship_template::ShipTemplateId;
 use wrts_messaging::{Match2Client, Message, WrtsMatchMessage};
 
 use crate::{
-    Bullet, Health, Team, Torpedo, Velocity,
+    Bullet, Health, Team,
     detection::{BaseDetection, CanDetect, DetectionStatus},
     networking::{ClientInfo, MessagesSend, SharedEntityTracking},
-    ship::{Ship, TurretState},
+    ship::{Ship, SmokeConsumableState, SmokePuff, TurretState},
 };
 
 pub struct DespawnNetworkedEntityCommand {
@@ -48,8 +51,8 @@ pub struct SpawnShipCommand {
 
 impl Command for SpawnShipCommand {
     fn apply(self, world: &mut World) -> () {
+        let template = self.ship_base.to_template();
         let entity = {
-            let template = self.ship_base.to_template();
             world
                 .spawn((
                     Ship {
@@ -61,7 +64,7 @@ impl Command for SpawnShipCommand {
                                 dir: t.default_dir,
                                 reload_timer: Timer::from_seconds(
                                     t.turret_template().reload_secs,
-                                    TimerMode::Repeating,
+                                    TimerMode::Once,
                                 ),
                             })
                             .collect_vec(),
@@ -71,7 +74,7 @@ impl Command for SpawnShipCommand {
                             .iter()
                             .flat_map(|torps| {
                                 (0..torps.volleys)
-                                    .map(|_idx| Timer::new(torps.reload, TimerMode::Repeating))
+                                    .map(|_idx| Timer::new(torps.reload, TimerMode::Once))
                             })
                             .collect(),
                     },
@@ -81,6 +84,7 @@ impl Command for SpawnShipCommand {
                         detection_increased_by_firing: Timer::new(Duration::ZERO, TimerMode::Once)
                             .tick(Duration::MAX)
                             .clone(),
+                        detection_increased_by_firing_at_range: 0.,
                     },
                     CanDetect,
                     self.health.clone(),
@@ -93,6 +97,16 @@ impl Command for SpawnShipCommand {
                 ))
                 .id()
         };
+
+        // Consumables
+        if let Some(smoke) = template.consumables.smoke() {
+            world.entity_mut(entity).insert(SmokeConsumableState {
+                cooldown_timer: Timer::new(smoke.cooldown, TimerMode::Once),
+                charges_unused: (smoke.charges > 0).then_some(smoke.charges),
+            });
+        }
+        // ...
+
         let shared_id = world.resource_mut::<SharedEntityTracking>().insert(entity);
 
         let mut clients = world.query::<&ClientInfo>();
@@ -125,6 +139,7 @@ pub struct SpawnBulletCommand {
     pub team: Team,
     pub bullet: Bullet,
     pub update_firing_detection_timer: Option<Duration>,
+    pub update_firing_detection_range: Option<f32>,
 }
 
 impl Command for SpawnBulletCommand {
@@ -153,6 +168,10 @@ impl Command for SpawnBulletCommand {
                 t.max(det.detection_increased_by_firing.remaining()),
                 TimerMode::Once,
             );
+            if let Some(range) = self.update_firing_detection_range {
+                det.detection_increased_by_firing_at_range =
+                    det.detection_increased_by_firing_at_range.max(range);
+            }
         }
 
         let shared_id = world.resource_mut::<SharedEntityTracking>().insert(entity);
@@ -180,34 +199,24 @@ impl Command for SpawnBulletCommand {
     }
 }
 
-/// A command that launches a torpedo from a boat,
-/// and __will update the ship that launched it
-struct LaunchTorpedoCommand {
-    pub torp: Torpedo,
-    pub team: Team,
-    pub vel: Velocity,
+pub struct SpawnSmokePuffCommand {
+    pub pos: Vec2,
+    pub radius: f32,
+    pub dissapation: Duration,
 }
 
-impl Command for LaunchTorpedoCommand {
+impl Command for SpawnSmokePuffCommand {
     fn apply(self, world: &mut World) -> () {
-        let rot = Quat::from_rotation_z(self.vel.0.truncate().to_angle());
-
         let entity = {
             world
                 .spawn((
-                    self.torp.clone(),
-                    self.team,
-                    Transform {
-                        translation: self.torp.inital_pos.extend(0.),
-                        rotation: rot,
-                        ..default()
+                    SmokePuff {
+                        radius: self.radius,
+                        dissapation: Timer::new(self.dissapation, TimerMode::Once),
                     },
-                    BaseDetection(2_000.),
-                    DetectionStatus {
-                        is_detected: false,
-                        detection_increased_by_firing: Timer::new(Duration::ZERO, TimerMode::Once)
-                            .tick(Duration::MAX)
-                            .clone(),
+                    Transform {
+                        translation: self.pos.extend(0.),
+                        ..default()
                     },
                 ))
                 .id()
@@ -218,20 +227,13 @@ impl Command for LaunchTorpedoCommand {
         let mut clients = world.query::<&ClientInfo>();
         let msgs_tx = world.get_resource::<MessagesSend>().unwrap();
 
-        let owning_ship = world
-            .resource::<SharedEntityTracking>()
-            .get_by_local(self.torp.owning_ship)
-            .unwrap();
         for cl in clients.iter(world) {
             msgs_tx.send(WrtsMatchMessage {
                 client: cl.info.id,
-                msg: Message::Match2Client(Match2Client::SpawnTorpedo {
+                msg: Message::Match2Client(Match2Client::SpawnSmokePuff {
                     id: shared_id,
-                    team: self.team.0,
-                    owning_ship,
-                    damage: self.torp.damage,
-                    pos: self.torp.inital_pos,
-                    vel: self.vel.0.truncate(),
+                    pos: self.pos,
+                    radius: self.radius,
                 }),
             });
         }

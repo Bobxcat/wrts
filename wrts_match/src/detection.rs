@@ -1,11 +1,10 @@
 use bevy::prelude::*;
-use ordered_float::OrderedFloat;
 use wrts_messaging::{Match2Client, Message, WrtsMatchMessage};
 
 use crate::{
-    Team,
+    Team, math_utils,
     networking::{ClientInfo, MessagesSend, SharedEntityTracking},
-    ship::Ship,
+    ship::{Ship, SmokePuff},
 };
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -29,10 +28,42 @@ pub struct CanDetect;
 pub struct DetectionStatus {
     pub is_detected: bool,
     pub detection_increased_by_firing: Timer,
+    pub detection_increased_by_firing_at_range: f32,
+}
+
+fn detector_detects_detectee(
+    detector_pos: Vec2,
+
+    pos: Vec2,
+    base_detection: f32,
+    detection_increased_by_firing: Option<f32>,
+    smoke_puffs: Query<(&SmokePuff, &Transform)>,
+) -> bool {
+    let mut detection = base_detection;
+    if let Some(firing_range) = detection_increased_by_firing {
+        detection = detection.max(firing_range);
+    }
+
+    let blocked_by_smoke = math_utils::cast_line_segment(
+        detector_pos,
+        pos,
+        smoke_puffs
+            .iter()
+            .map(|(puff, puff_trans)| math_utils::Circle {
+                pos: puff_trans.translation.truncate(),
+                radius: puff.radius,
+            }),
+    )
+    .is_some();
+
+    if blocked_by_smoke {
+        detection = 4_000.;
+    }
+
+    detector_pos.distance(pos) <= detection
 }
 
 fn update_detection(
-    mut commands: Commands,
     detectors: Query<(&Team, &Transform), With<CanDetect>>,
     detectees: Query<(
         Entity,
@@ -42,6 +73,7 @@ fn update_detection(
         &mut DetectionStatus,
         Option<&Ship>,
     )>,
+    smoke_puffs: Query<(&SmokePuff, &Transform)>,
     clients: Query<&ClientInfo>,
     shared_entities: Res<SharedEntityTracking>,
     msgs_tx: Res<MessagesSend>,
@@ -57,34 +89,34 @@ fn update_detection(
     ) in detectees
     {
         let old_detectee_status = detectee_status.clone();
-        let detection = {
-            let mut det = base_detection.0;
-            if let Some(ship) = detectee_is_ship {
+
+        let detection_increased_by_firing = match detectee_is_ship {
+            Some(_) => {
                 if !detectee_status
                     .detection_increased_by_firing
                     .tick(time.delta())
                     .finished()
                 {
-                    det = ship
-                        .template
-                        .turret_templates
-                        .values()
-                        .max_by_key(|t| OrderedFloat(t.max_range))
-                        .unwrap()
-                        .max_range;
+                    true
+                } else {
+                    false
                 }
             }
-            det
+            None => true,
         };
 
         detectee_status.is_detected = detectors.iter().any(|(detector_team, detector_trans)| {
             if detector_team == detectee_team {
                 return false;
             }
-            detector_trans
-                .translation
-                .distance(detectee_trans.translation)
-                <= detection
+            detector_detects_detectee(
+                detector_trans.translation.truncate(),
+                detectee_trans.translation.truncate(),
+                base_detection.0,
+                detection_increased_by_firing
+                    .then_some(detectee_status.detection_increased_by_firing_at_range),
+                smoke_puffs,
+            )
         });
 
         if !detectee_status.is_detected {

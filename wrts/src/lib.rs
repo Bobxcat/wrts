@@ -108,6 +108,12 @@ struct MoveOrder {
     pub waypoints: Vec<Vec2>,
 }
 
+#[derive(Component, Debug, Default, Clone)]
+#[require(Transform)]
+struct SmokePuff {
+    pub radius: f32,
+}
+
 #[derive(Component, Debug, Clone)]
 struct FireTarget {
     ship: Entity,
@@ -294,6 +300,18 @@ fn update_torpedo_displays(
                 *torp_sprite = Sprite::default();
             }
         }
+    }
+}
+
+fn update_smoke_puff_displays(mut gizmos: Gizmos, smoke_puffs: Query<(&SmokePuff, &Transform)>) {
+    for (puff, puff_trans) in smoke_puffs {
+        gizmos
+            .circle_2d(
+                Isometry2d::from_translation(puff_trans.translation.truncate()),
+                puff.radius,
+                Color::WHITE,
+            )
+            .resolution(32);
     }
 }
 
@@ -696,6 +714,7 @@ pub fn run() {
                 draw_background,
                 update_bullet_displays,
                 update_torpedo_displays,
+                update_smoke_puff_displays,
             )
                 .run_if(in_state(AppState::InMatch)),
         )

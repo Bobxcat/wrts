@@ -7,15 +7,41 @@ use crate::{Health, Team, Velocity};
 #[derive(Debug, Clone)]
 pub struct TurretState {
     pub dir: f32,
+    /// A `once` timer
     pub reload_timer: Timer,
 }
 
-#[derive(Debug, Component, Clone)]
+#[derive(Component, Debug, Clone)]
+pub struct SmokeConsumableState {
+    pub cooldown_timer: Timer,
+    /// `None` if infinite charges
+    pub charges_unused: Option<usize>,
+}
+
+#[derive(Component, Debug, Clone)]
+pub struct SmokeDeploying {
+    /// A `once` timer
+    pub action_timer: Timer,
+    /// A `repeating` timer
+    pub puff_timer: Timer,
+}
+
+/// Called a puff and not a cloud because puff is a cute word
+#[derive(Component, Debug, Clone)]
+#[require(Transform)]
+pub struct SmokePuff {
+    pub radius: f32,
+    /// A `once` timer
+    pub dissapation: Timer,
+}
+
+#[derive(Component, Debug, Clone)]
 #[require(Team, Health, Transform, Velocity)]
 pub struct Ship {
     pub template: &'static ShipTemplate,
     pub turret_states: Vec<TurretState>,
     pub curr_speed: f32,
+    /// A `once` timer
     pub torpedo_reloads: Vec<Timer>,
 }
 

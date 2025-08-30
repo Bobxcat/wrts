@@ -68,6 +68,7 @@ impl ShipTemplate {
                 range: 12_000.,
                 port_firing_angle: AngleRange::from_angles_deg(60., 120.),
             }),
+            consumables: Consumables::new(),
         }
     }
 }

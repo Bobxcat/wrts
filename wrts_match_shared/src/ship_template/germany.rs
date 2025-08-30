@@ -72,6 +72,7 @@ impl ShipTemplate {
                 },
             ],
             torpedoes: None,
+            consumables: Consumables::new(),
         }
     }
 }

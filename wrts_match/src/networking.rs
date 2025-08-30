@@ -60,7 +60,9 @@ fn stdout_handler(rx: Receiver<WrtsMatchMessage>) {
             Ok(msg) => {
                 match &msg.msg {
                     Message::Match2Client(Match2Client::SetTrans { .. })
-                    | Message::Match2Client(Match2Client::SetTurretDirs { .. }) => {
+                    | Message::Match2Client(Match2Client::SetTurretDirs { .. })
+                    | Message::Match2Client(Match2Client::SetVelocity { .. })
+                    | Message::Match2Client(Match2Client::SetReloadedTorps { .. }) => {
                         trace!("Sending: {msg:?}")
                     }
                     _ => info!("Sending: {msg:?}"),
@@ -407,7 +409,7 @@ impl Command for LaunchTorpedoVolleyCommand {
             return;
         }
 
-        volley_timer.tick(Duration::from_nanos(1));
+        volley_timer.reset();
         let ship_pos = ship_trans.translation.truncate();
 
         for torp_idx in 0..torpedoes.torps_per_volley {
@@ -445,6 +447,7 @@ impl Command for LaunchTorpedoVolleyCommand {
                             )
                             .tick(Duration::MAX)
                             .clone(),
+                            detection_increased_by_firing_at_range: 0.,
                         },
                     ))
                     .id()

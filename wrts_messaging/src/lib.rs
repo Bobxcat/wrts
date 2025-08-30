@@ -74,6 +74,8 @@ pub enum Match2Client {
     },
     PrintMsg(String),
     DestroyEntity(SharedEntityId),
+    /// FIXME? Don't send until the client
+    /// should see the torp
     SpawnShip {
         id: SharedEntityId,
         team: ClientId,
@@ -91,6 +93,8 @@ pub enum Match2Client {
         pos: Vec3,
         rot: Quat,
     },
+    /// FIXME: Don't send until the client
+    /// should see the torp
     SpawnTorpedo {
         id: SharedEntityId,
         team: ClientId,
@@ -98,6 +102,11 @@ pub enum Match2Client {
         damage: f64,
         pos: Vec2,
         vel: Vec2,
+    },
+    SpawnSmokePuff {
+        id: SharedEntityId,
+        pos: Vec2,
+        radius: f32,
     },
     SetReloadedTorps {
         id: SharedEntityId,

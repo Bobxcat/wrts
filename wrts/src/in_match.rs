@@ -4,7 +4,8 @@ use bevy::prelude::*;
 use wrts_messaging::{Client2Match, ClientSharedInfo, Match2Client, Message};
 
 use crate::{
-    AppState, Bullet, DetectionStatus, Health, MoveOrder, PlayerSettings, Team, Torpedo, Velocity,
+    AppState, Bullet, DetectionStatus, Health, MoveOrder, PlayerSettings, SmokePuff, Team, Torpedo,
+    Velocity,
     networking::{ClientInfo, ServerConnection, ThisClient},
     ship::{Ship, ShipModifiersDisplay, ShipUI, TurretState},
 };
@@ -313,6 +314,19 @@ fn in_match_networking(
                         Transform {
                             translation: pos.extend(0.),
                             rotation: Quat::from_rotation_z(vel.to_angle()),
+                            ..default()
+                        },
+                    ))
+                    .id();
+                shared_entities.insert(id, local);
+            }
+            Message::Match2Client(Match2Client::SpawnSmokePuff { id, pos, radius }) => {
+                let local = commands
+                    .spawn((
+                        StateScoped(AppState::InMatch),
+                        SmokePuff { radius },
+                        Transform {
+                            translation: pos.extend(0.),
                             ..default()
                         },
                     ))

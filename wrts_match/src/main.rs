@@ -14,8 +14,8 @@ use crate::{
     initialize_game::initalize_game,
     math_utils::BulletProblemRes,
     networking::{ClientInfo, MessagesSend, NetworkingPlugin, SharedEntityTracking},
-    ship::{Ship, apply_dispersion},
-    spawn_entity::{DespawnNetworkedEntityCommand, SpawnBulletCommand},
+    ship::{Ship, SmokeDeploying, SmokePuff, apply_dispersion},
+    spawn_entity::{DespawnNetworkedEntityCommand, SpawnBulletCommand, SpawnSmokePuffCommand},
 };
 
 mod detection;
@@ -114,9 +114,15 @@ struct Torpedo {
 fn torpedo_reloading(ships: Query<&mut Ship>, time: Res<Time>) {
     for mut ship in ships {
         for timer in &mut ship.torpedo_reloads {
-            if !timer.finished() {
-                timer.tick(time.delta());
-            }
+            timer.tick(time.delta());
+        }
+    }
+}
+
+fn despawn_old_torpedoes(mut commands: Commands, torps: Query<(Entity, &Torpedo, &Transform)>) {
+    for (torp_entity, torp, torp_trans) in torps {
+        if torp_trans.translation.truncate().distance(torp.inital_pos) > torp.max_range {
+            commands.entity(torp_entity).despawn();
         }
     }
 }
@@ -344,6 +350,14 @@ fn collide_bullets(
     }
 }
 
+fn turret_reloading(ships: Query<&mut Ship>, time: Res<Time>) {
+    for mut ship in ships {
+        for turret in &mut ship.turret_states {
+            turret.reload_timer.tick(time.delta());
+        }
+    }
+}
+
 fn fire_bullets(
     mut commands: Commands,
     ships: Query<(
@@ -397,11 +411,6 @@ fn fire_bullets(
                 .filter(|(_, _, _, _, _, _, targ_detection)| targ_detection.is_detected);
 
             let Some((targ, _, _, targ_trans, targ_vel, _, _)) = targ else {
-                let turret_timer =
-                    &mut ships_by_team[team][ship_idx].2.turret_states[turret_idx].reload_timer;
-                if !turret_timer.finished() {
-                    turret_timer.tick(time.delta());
-                }
                 continue;
             };
             (*targ, **targ_trans, **targ_vel)
@@ -422,7 +431,6 @@ fn fire_bullets(
         let targ_pos = targ_trans.translation.truncate();
 
         let turret_state = &mut ship.turret_states[turret_idx];
-        let turret_reload_timer = &mut turret_state.reload_timer;
 
         let Some(BulletProblemRes {
             intersection_point,
@@ -440,9 +448,6 @@ fn fire_bullets(
         )
         .filter(|bp| bp.intersection_dist < turret_template.max_range)
         else {
-            if !turret_reload_timer.finished() {
-                turret_reload_timer.tick(time.delta());
-            }
             continue;
         };
 
@@ -495,54 +500,88 @@ fn fire_bullets(
                     false
                 };
             if turret_not_aimed || turret_outside_firing_angle {
-                if !turret_reload_timer.finished() {
-                    turret_reload_timer.tick(time.delta());
-                }
                 continue;
             }
         }
 
-        for _ in 0..turret_reload_timer.times_finished_this_tick() {
-            for barrel_idx in 0..turret_template.barrel_count {
-                let barrel_lateral_offset = (barrel_idx - (turret_template.barrel_count - 1) / 2)
-                    as f32
-                    * turret_template.barrel_spacing;
-
-                let bullet_vel = apply_dispersion(&turret_template.dispersion, bullet_dir)
-                    * turret_template.muzzle_vel as f32;
-
-                let bullet_start = turret_pos
-                    + Vec2::from_angle(bullet_azimuth).rotate(vec2(0., barrel_lateral_offset));
-                // The bullet should start very slightly above the water,
-                // but not by very much since ships have a small draft so
-                // it would mean a lot more missing
-                let bullet_start = bullet_start.extend(0.01);
-
-                let bullet = Bullet {
-                    owning_ship: ship_entity,
-                    targ_ship: targ,
-                    inital_pos: bullet_start,
-                    inital_vel: bullet_vel,
-                    inital_aimpoint: intersection_point,
-                    current_aimpoint: intersection_point,
-                    expected_flight_time_total: Duration::from_secs_f32(intersection_time),
-                    current_flight_time: Duration::ZERO,
-                    damage: turret_template.damage,
-                };
-
-                commands.queue(SpawnBulletCommand {
-                    team,
-                    bullet,
-                    update_firing_detection_timer: Some(Duration::from_secs(20)),
-                });
-            }
+        if !turret_state.reload_timer.finished() {
+            continue;
         }
 
-        // We want the turret to remain reloaded or continue progressing its
-        // reload when unable to fire, including when there is no target
-        // If we consider the previous checks that the target is shootable,
-        // placing the tick here accounts for the above
-        turret_reload_timer.tick(time.delta());
+        for barrel_idx in 0..turret_template.barrel_count {
+            let barrel_lateral_offset = (barrel_idx - (turret_template.barrel_count - 1) / 2)
+                as f32
+                * turret_template.barrel_spacing;
+
+            let bullet_vel = apply_dispersion(&turret_template.dispersion, bullet_dir)
+                * turret_template.muzzle_vel as f32;
+
+            let bullet_start = turret_pos
+                + Vec2::from_angle(bullet_azimuth).rotate(vec2(0., barrel_lateral_offset));
+            // The bullet should start very slightly above the water,
+            // but not by very much since ships have a small draft so
+            // it would mean a lot more missing
+            let bullet_start = bullet_start.extend(0.01);
+
+            let bullet = Bullet {
+                owning_ship: ship_entity,
+                targ_ship: targ,
+                inital_pos: bullet_start,
+                inital_vel: bullet_vel,
+                inital_aimpoint: intersection_point,
+                current_aimpoint: intersection_point,
+                expected_flight_time_total: Duration::from_secs_f32(intersection_time),
+                current_flight_time: Duration::ZERO,
+                damage: turret_template.damage,
+            };
+
+            commands.queue(SpawnBulletCommand {
+                team,
+                bullet,
+                update_firing_detection_timer: Some(Duration::from_secs(20)),
+                update_firing_detection_range: Some(turret_template.max_range),
+            });
+        }
+
+        turret_state.reload_timer.reset();
+    }
+}
+
+fn deploy_smoke(
+    mut commands: Commands,
+    smokers: Query<(Entity, &Ship, &mut SmokeDeploying, &Transform)>,
+    time: Res<Time>,
+) {
+    for (smoker_entity, ship, mut smoker, smoker_trans) in smokers {
+        smoker.action_timer.tick(time.delta());
+        smoker.puff_timer.tick(time.delta());
+        if smoker.puff_timer.finished() || smoker.action_timer.finished() {
+            let smoke = ship.template.consumables.smoke().unwrap();
+            commands.queue(SpawnSmokePuffCommand {
+                pos: smoker_trans.translation.truncate(),
+                radius: smoke.radius,
+                dissapation: smoke.dissapation,
+            });
+        }
+
+        if smoker.action_timer.finished() {
+            commands.entity(smoker_entity).remove::<SmokeDeploying>();
+        }
+    }
+}
+
+fn dissapate_smoke_puffs(
+    mut commands: Commands,
+    puffs: Query<(Entity, &mut SmokePuff)>,
+    time: Res<Time>,
+) {
+    for (puff_entity, mut puff) in puffs {
+        puff.dissapation.tick(time.delta());
+        if puff.dissapation.finished() {
+            commands.queue(DespawnNetworkedEntityCommand {
+                entity: puff_entity,
+            });
+        }
     }
 }
 
@@ -581,9 +620,13 @@ fn main() -> Result<()> {
                 force_ship_in_map.after(apply_velocity),
                 move_bullets,
                 torpedo_reloading,
+                despawn_old_torpedoes.after(apply_velocity),
                 collide_torpedoes.after(apply_velocity),
                 collide_bullets.after(move_bullets),
-                fire_bullets.after(DetectionSystems),
+                turret_reloading,
+                fire_bullets.after(turret_reloading).after(DetectionSystems),
+                deploy_smoke,
+                dissapate_smoke_puffs,
             ),
         )
         .run();

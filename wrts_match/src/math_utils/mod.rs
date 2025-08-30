@@ -1,7 +1,10 @@
 //! Important math functions
 mod generated_bullet_problem_solution;
 
-use bevy::{math::dvec3, prelude::*};
+use bevy::{
+    math::{VectorSpace, dvec3},
+    prelude::*,
+};
 
 /// Returns the angle, in radians from the ground, that a bullet needs to be fired from to arrive at the given distance from its origin
 pub fn gun_angle_for_distance(
@@ -154,4 +157,51 @@ pub fn bullet_problem(
         projectile_azimuth: azimuth as f32,
         projectile_elevation: elevation as f32,
     })
+}
+
+pub struct Circle {
+    pub pos: Vec2,
+    pub radius: f32,
+}
+
+pub struct LineSegmentCastRes {
+    /// Nearest intersection
+    pub intersection: Vec2,
+    /// Lerp from `start` to `end` of the
+    /// input line that the intersection occured on
+    pub lerp: f32,
+}
+
+pub fn cast_line_segment(
+    start: Vec2,
+    end: Vec2,
+    circles: impl IntoIterator<Item = Circle>,
+) -> Option<LineSegmentCastRes> {
+    let dir = (end - start).try_normalize()?;
+    let line_length = (end - start).length();
+    let mut res: Option<LineSegmentCastRes> = None;
+    for Circle { pos, radius } in circles {
+        let pos_rel = pos - start;
+        // let pt_on_line_rel = pos_rel.project_onto(dir);
+        // let lerp = pt_on_line_rel.length() / line_length;
+        let lerp = dir.dot(pos_rel) / line_length;
+        let pt_on_line = Vec2::lerp(start, end, lerp.clamp(0., 1.));
+
+        if (pt_on_line - pos).length() <= radius {
+            let new_res = LineSegmentCastRes {
+                intersection: pt_on_line,
+                lerp,
+            };
+            match &mut res {
+                Some(prev_res) if new_res.lerp < prev_res.lerp => {
+                    res = Some(new_res);
+                }
+                None => {
+                    res = Some(new_res);
+                }
+                _ => (),
+            }
+        }
+    }
+    res
 }
