@@ -315,6 +315,27 @@ fn update_smoke_puff_displays(mut gizmos: Gizmos, smoke_puffs: Query<(&SmokePuff
     }
 }
 
+fn use_consumables(
+    mut commands: Commands,
+    selected_ships: Query<(Entity, &Ship), With<Selected>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut server: ResMut<ServerConnection>,
+    shared_entities: Res<SharedEntityTracking>,
+) {
+    let Ok((selected_entity, selected_ship)) = selected_ships.single() else {
+        return;
+    };
+    let consumables = &selected_ship.template.consumables;
+    // Smoke
+    if keyboard.just_pressed(KeyCode::Digit1) && only_modifier_keys_pressed(&keyboard, []) {
+        if consumables.smoke().is_some() {
+            let _ = server.send(Message::Client2Match(Client2Match::UseConsumableSmoke {
+                ship: shared_entities[selected_entity],
+            }));
+        }
+    }
+}
+
 fn update_ship_ghosts(
     mut commands: Commands,
     changed_ships: Query<
@@ -708,6 +729,7 @@ pub fn run() {
                 update_selected_ship_orders.after(update_selection),
                 fire_torpedoes.after(update_selection),
                 update_selected_ship_orders_display.after(update_selected_ship_orders),
+                use_consumables,
                 update_ship_ghosts,
                 update_ship_ghosts_display.after(update_ship_ghosts),
                 update_camera,

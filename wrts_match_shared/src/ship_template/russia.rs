@@ -80,7 +80,7 @@ impl ShipTemplate {
             consumables: Consumables::new().with_smoke(Smoke {
                 action_time: Duration::from_secs(10),
                 dissapation: Duration::from_secs(40),
-                radius: 2_000.,
+                radius: 450.,
                 cooldown: Duration::from_secs(30),
                 charges: 3,
             }),

@@ -12,7 +12,7 @@ use wrts_messaging::{
 
 use crate::detection::{BaseDetection, DetectionStatus};
 pub use crate::networking::shared_entity_tracking::SharedEntityTracking;
-use crate::ship::Ship;
+use crate::ship::{Ship, SmokeConsumableState, SmokeDeploying};
 use crate::{FireTarget, Health, MoveOrder, Team, Torpedo, Velocity};
 
 pub struct NetworkingPlugin;
@@ -332,6 +332,49 @@ fn read_messages(
                     dir,
                 });
             }
+            Message::Client2Match(Client2Match::UseConsumableSmoke { ship }) => {
+                commands.queue(UseConsumableSmokeCommand {
+                    msg_sender,
+                    ship_id: ship,
+                });
+                // let Some(local) = shared_entities.get_by_shared(ship) else {
+                //     warn!("Client {msg_sender} sent message with bad id: {ship:?}");
+                //     continue;
+                // };
+                // if teams
+                //     .get(local)
+                //     .ok()
+                //     .and_then(|team| (team.0 == msg_sender).then_some(()))
+                //     .is_none()
+                // {
+                //     warn!(
+                //         "Client {msg_sender} tried to UseConsumableSmoke on an entity not owned by them"
+                //     );
+                //     continue;
+                // }
+
+                // let Ok((ship, _ship_trans)) = ships.get(local) else {
+                //     warn!("Client {msg_sender} tried to UseConsumableSmoke on a nonexistent ship");
+                //     continue;
+                // };
+
+                // if let Some(smoke) = ship.template.consumables.smoke() {
+                //     warn!(
+                //         "Client {msg_sender} tried to UseConsumableSmoke on a ship without smoke"
+                //     );
+                //     continue;
+                // }
+                // commands.entity(local).try_insert_if(
+                //     (SmokeDeploying {
+                //         action_timer: todo!(),
+                //         puff_timer: todo!(),
+                //     }),
+                //     || {
+                //         //
+                //         true
+                //     },
+                // );
+            }
             Message::Client2Match(Client2Match::InitB { .. })
             | Message::Match2Client(_)
             | Message::Client2Lobby(_)
@@ -471,6 +514,63 @@ impl Command for LaunchTorpedoVolleyCommand {
                     }),
                 });
             }
+        }
+    }
+}
+
+struct UseConsumableSmokeCommand {
+    msg_sender: ClientId,
+    ship_id: SharedEntityId,
+}
+
+impl Command for UseConsumableSmokeCommand {
+    fn apply(self, world: &mut World) -> () {
+        let Self {
+            msg_sender,
+            ship_id,
+        } = self;
+        let Some(ship_local) = world
+            .resource::<SharedEntityTracking>()
+            .get_by_shared(self.ship_id)
+        else {
+            warn!("Client {msg_sender} sent message with bad ship id: {ship_id:?}");
+            return;
+        };
+        if world
+            .get::<Team>(ship_local)
+            .and_then(|team| (team.0 == msg_sender).then_some(()))
+            .is_none()
+        {
+            warn!("Client {msg_sender} tried to UseConsumableSmoke on an entity not owned by them");
+            return;
+        }
+
+        if let Some(_ship_smoke_deploying) = world.get::<SmokeDeploying>(ship_local) {
+            return;
+        }
+
+        let Some((ship, mut ship_smoke_state)) = world
+            .query::<(&Ship, &mut SmokeConsumableState)>()
+            .get_mut(world, ship_local)
+            .ok()
+        else {
+            warn!(
+                "Client {msg_sender} tried to UseConsumableSmoke on a ship that doesn't exist anymore or doesn't have smoke"
+            );
+            return;
+        };
+
+        if ship_smoke_state.charges_unused.unwrap_or(usize::MAX) == 0 {
+            return;
+        }
+
+        if ship_smoke_state.cooldown_timer.finished() {
+            let smoke = ship.template.consumables.smoke().unwrap();
+            ship_smoke_state.cooldown_timer.reset();
+            world.entity_mut(ship_local).insert(SmokeDeploying {
+                action_timer: Timer::new(smoke.action_time, TimerMode::Once),
+                puff_timer: Timer::new(Duration::from_secs(2), TimerMode::Repeating),
+            });
         }
     }
 }

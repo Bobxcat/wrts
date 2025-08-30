@@ -14,7 +14,7 @@ use crate::{
     initialize_game::initalize_game,
     math_utils::BulletProblemRes,
     networking::{ClientInfo, MessagesSend, NetworkingPlugin, SharedEntityTracking},
-    ship::{Ship, SmokeDeploying, SmokePuff, apply_dispersion},
+    ship::{Ship, SmokeConsumableState, SmokeDeploying, SmokePuff, apply_dispersion},
     spawn_entity::{DespawnNetworkedEntityCommand, SpawnBulletCommand, SpawnSmokePuffCommand},
 };
 
@@ -547,6 +547,12 @@ fn fire_bullets(
     }
 }
 
+fn advance_smoke_cooldown(smokers: Query<&mut SmokeConsumableState>, time: Res<Time>) {
+    for mut smoker in smokers {
+        smoker.cooldown_timer.tick(time.delta());
+    }
+}
+
 fn deploy_smoke(
     mut commands: Commands,
     smokers: Query<(Entity, &Ship, &mut SmokeDeploying, &Transform)>,
@@ -625,6 +631,7 @@ fn main() -> Result<()> {
                 collide_bullets.after(move_bullets),
                 turret_reloading,
                 fire_bullets.after(turret_reloading).after(DetectionSystems),
+                advance_smoke_cooldown,
                 deploy_smoke,
                 dissapate_smoke_puffs,
             ),

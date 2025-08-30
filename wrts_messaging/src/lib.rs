@@ -62,6 +62,9 @@ pub enum Client2Match {
         ship: SharedEntityId,
         dir: Vec2,
     },
+    UseConsumableSmoke {
+        ship: SharedEntityId,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

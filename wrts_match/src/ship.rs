@@ -13,6 +13,7 @@ pub struct TurretState {
 
 #[derive(Component, Debug, Clone)]
 pub struct SmokeConsumableState {
+    /// A `once` timer
     pub cooldown_timer: Timer,
     /// `None` if infinite charges
     pub charges_unused: Option<usize>,
