@@ -182,8 +182,6 @@ pub fn cast_line_segment(
     let mut res: Option<LineSegmentCastRes> = None;
     for Circle { pos, radius } in circles {
         let pos_rel = pos - start;
-        // let pt_on_line_rel = pos_rel.project_onto(dir);
-        // let lerp = pt_on_line_rel.length() / line_length;
         let lerp = dir.dot(pos_rel) / line_length;
         let pt_on_line = Vec2::lerp(start, end, lerp.clamp(0., 1.));
 

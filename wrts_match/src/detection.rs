@@ -7,6 +7,8 @@ use crate::{
     ship::{Ship, SmokePuff},
 };
 
+const MIN_DETECTION: f32 = 2_000.;
+
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DetectionSystems;
 
@@ -60,8 +62,11 @@ fn detector_detects_detectee(
             detection = firing_range;
         }
     } else if blocked_by_smoke {
-        detection = 2_000.;
+        // FIXME? Only block vision through smoke for ships
+        detection = MIN_DETECTION;
     }
+
+    detection = detection.max(MIN_DETECTION);
 
     detector_pos.distance(pos) <= detection
 }
