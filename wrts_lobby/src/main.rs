@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
+use clap::Parser;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, info_span, level_filters::LevelFilter, warn};
@@ -9,7 +10,6 @@ use wrts_messaging::{
     Client2Lobby, ClientId, ClientSharedInfo, Lobby2Client, Message, RecvFromStream, SendToStream,
 };
 use wtransport::{Endpoint, Identity, ServerConfig, endpoint::IncomingSession};
-use clap::Parser;
 
 use crate::{
     clients::{ClientData, Clients, ClientsEvent},
@@ -338,7 +338,7 @@ async fn main() -> Result<()> {
                 info!("Open sessions: {}", ep.open_connections());
                 info!("Awaiting session {client_id}");
                 let session = ep.accept().await;
-                let mm_subscription = mm.lock().await.subscribe(client_id);
+                let mm_subscription = mm.subscribe(client_id).await;
                 tokio::spawn(
                     handle_connection(NewConnectionInfo {
                         incoming_session: session,

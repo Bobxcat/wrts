@@ -2,7 +2,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use itertools::Itertools;
 use slotmap::SlotMap;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, info_span, warn};
 use wrts_messaging::{
     ClientId, Message, RecvFromStream, SendToStream, WrtsMatchInitMessage, WrtsMatchMessage,
@@ -39,7 +40,7 @@ enum ClientState {
 
 struct MatchmakerClientData {
     tx: mpsc::Sender<Matchmaker2ClientHandler>,
-    rx: mpsc::Receiver<ClientHandler2Matchmaker>,
+    // rx: mpsc::Receiver<ClientHandler2Matchmaker>,
     state: ClientState,
 }
 
@@ -113,72 +114,173 @@ async fn match_instance_router(
     let _ = process.process.kill();
 }
 
+struct MatchmakerSubscribeMsg {
+    pub client_id: ClientId,
+    pub send_subscribtion: oneshot::Sender<ClientHandlerMatchmakerSubscription>,
+}
+
+pub struct MatchmakerSubscriber {
+    new_clients_tx: mpsc::Sender<MatchmakerSubscribeMsg>,
+}
+
+impl MatchmakerSubscriber {
+    /// Subscribes a client handler to this matchmaker,
+    /// which doesn't yet signify that client as ready to matchmake
+    pub async fn subscribe(&self, client_id: ClientId) -> ClientHandlerMatchmakerSubscription {
+        let (tx, rx) = oneshot::channel();
+        let _ = self
+            .new_clients_tx
+            .send(MatchmakerSubscribeMsg {
+                client_id,
+                send_subscribtion: tx,
+            })
+            .await;
+        rx.await.expect("Matchmaker closed down!")
+    }
+}
+
 pub struct Matchmaker {
     active_matches: SlotMap<MatchId, ActiveMatch>,
     connected_clients: HashMap<ClientId, MatchmakerClientData>,
 }
 
 impl Matchmaker {
-    pub fn spawn() -> Arc<Mutex<Self>> {
-        let mm = Arc::new(Mutex::new(Self {
+    pub fn spawn() -> MatchmakerSubscriber {
+        let mm = Self {
             active_matches: SlotMap::default(),
             connected_clients: HashMap::default(),
-        }));
-        tokio::spawn(matchmaker_runner(mm.clone()).instrument(info_span!("Matchmaker Runner")));
-        mm
-    }
-
-    /// Subscribes a client handler to this matchmaker,
-    /// which doesn't yet signify that client as ready to matchmake
-    pub fn subscribe(&mut self, client_id: ClientId) -> ClientHandlerMatchmakerSubscription {
-        let (mmtx, clrx) = mpsc::channel(1024);
-        let (cltx, mmrx) = mpsc::channel(1024);
-
-        self.connected_clients.insert(
-            client_id,
-            MatchmakerClientData {
-                tx: mmtx,
-                rx: mmrx,
-                state: ClientState::InLobby,
-            },
+        };
+        let (tx, rx) = mpsc::channel(128);
+        tokio::spawn(
+            async move {
+                let disconnect = CancellationToken::new();
+                matchmaker_runner(disconnect.clone(), mm, rx).await;
+                disconnect.cancel();
+            }
+            .instrument(info_span!("Matchmaker Runner")),
         );
-        ClientHandlerMatchmakerSubscription { tx: cltx, rx: clrx }
+        MatchmakerSubscriber { new_clients_tx: tx }
     }
 }
 
-async fn matchmaker_runner(mm: Arc<Mutex<Matchmaker>>) {
-    loop {
-        tokio::task::yield_now().await;
-        let mut mm = mm.lock().await;
+enum MatchmakerMessage {
+    Client2MM {
+        client: ClientId,
+        msg: ClientHandler2Matchmaker,
+    },
+    ClientJoined {
+        subscribe: MatchmakerSubscribeMsg,
+    },
+}
 
-        // Handle client messages
-        let mut clients_disconnected = Vec::new();
-        for (&cl, cl_data) in &mut mm.connected_clients {
-            loop {
-                match cl_data.rx.try_recv() {
-                    Ok(ClientHandler2Matchmaker::SetReadyForMatch { is_ready }) => {
-                        match cl_data.state {
-                            ClientState::InLobby | ClientState::ReadyForMatch => {
-                                cl_data.state = match is_ready {
-                                    true => ClientState::ReadyForMatch,
-                                    false => ClientState::InLobby,
-                                };
-                            }
-                            ClientState::InMatch(_) => continue,
-                        }
-                    }
-                    Err(mpsc::error::TryRecvError::Empty) => break,
-                    Err(mpsc::error::TryRecvError::Disconnected) => {
-                        clients_disconnected.push(cl);
-                        break;
-                    }
+async fn matchmaker_new_clients_router(
+    disconnect: CancellationToken,
+    tx: mpsc::Sender<MatchmakerMessage>,
+    mut new_clients: mpsc::Receiver<MatchmakerSubscribeMsg>,
+) {
+    loop {
+        tokio::select! {
+            msg = new_clients.recv() => {
+                let Some(msg) = msg else {
+                    break;
+                };
+                if let Err(_) = tx.send(MatchmakerMessage::ClientJoined { subscribe: msg }).await {
+                    break;
                 }
             }
+            _ = disconnect.cancelled() => {
+                break;
+            }
         }
+    }
+    disconnect.cancel();
+}
+
+async fn matchmaker_client_router(
+    disconnect: CancellationToken,
+    tx: mpsc::Sender<MatchmakerMessage>,
+    mut client_msgs: mpsc::Receiver<ClientHandler2Matchmaker>,
+    client: ClientId,
+) {
+    loop {
+        tokio::select! {
+            msg = client_msgs.recv() => {
+                let Some(msg) = msg else {
+                    break;
+                };
+                if let Err(_) = tx.send(MatchmakerMessage::Client2MM { client, msg }).await {
+                    break;
+                }
+            }
+            _ = disconnect.cancelled() => {
+                break;
+            }
+        }
+    }
+    disconnect.cancel();
+}
+
+async fn matchmaker_runner(
+    disconnect: CancellationToken,
+    mut mm: Matchmaker,
+    new_clients: mpsc::Receiver<MatchmakerSubscribeMsg>,
+) {
+    let (msgs_tx, mut msgs) = mpsc::channel(1024);
+    tokio::spawn(matchmaker_new_clients_router(
+        disconnect.clone(),
+        msgs_tx.clone(),
+        new_clients,
+    ));
+
+    while let Some(msg) = msgs.recv().await {
+        let clients_disconnected = mm
+            .connected_clients
+            .iter()
+            .filter_map(|(cl, cl_data)| cl_data.tx.is_closed().then_some(*cl))
+            .collect_vec();
 
         for cl in clients_disconnected {
             warn!("Disconnected: {cl}");
             mm.connected_clients.remove(&cl);
+        }
+
+        match msg {
+            MatchmakerMessage::Client2MM { client, msg } => match msg {
+                ClientHandler2Matchmaker::SetReadyForMatch { is_ready } => {
+                    let Some(cl_data) = mm.connected_clients.get_mut(&client) else {
+                        continue;
+                    };
+                    match cl_data.state {
+                        ClientState::InLobby | ClientState::ReadyForMatch => {
+                            cl_data.state = match is_ready {
+                                true => ClientState::ReadyForMatch,
+                                false => ClientState::InLobby,
+                            };
+                        }
+                        ClientState::InMatch(_) => continue,
+                    }
+                }
+            },
+            MatchmakerMessage::ClientJoined { subscribe } => {
+                let (mmtx, clrx) = mpsc::channel(1024);
+                let (cltx, mmrx) = mpsc::channel(1024);
+                tokio::spawn(matchmaker_client_router(
+                    disconnect.clone(),
+                    msgs_tx.clone(),
+                    mmrx,
+                    subscribe.client_id,
+                ));
+
+                mm.connected_clients.insert(
+                    subscribe.client_id,
+                    MatchmakerClientData {
+                        tx: mmtx,
+                        state: ClientState::InLobby,
+                    },
+                );
+                let sub = ClientHandlerMatchmakerSubscription { tx: cltx, rx: clrx };
+                let _ = subscribe.send_subscribtion.send(sub);
+            }
         }
 
         // Make a match if possible
@@ -222,4 +324,6 @@ async fn matchmaker_runner(mm: Arc<Mutex<Matchmaker>>) {
             );
         }
     }
+
+    warn!("Matchmaker disconnecting!");
 }
