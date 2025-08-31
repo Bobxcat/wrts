@@ -82,7 +82,7 @@ impl ShipTemplate {
                 action_time: Duration::from_secs(10),
                 dissapation: Duration::from_secs(40),
                 radius: 450.,
-                cooldown: Duration::from_secs(30),
+                cooldown: Duration::from_secs(60),
                 charges: 3,
             }),
         }

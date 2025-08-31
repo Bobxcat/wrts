@@ -549,7 +549,10 @@ fn fire_bullets(
     }
 }
 
-fn advance_smoke_cooldown(smokers: Query<&mut SmokeConsumableState>, time: Res<Time>) {
+fn advance_smoke_cooldown(
+    smokers: Query<&mut SmokeConsumableState, Without<SmokeDeploying>>,
+    time: Res<Time>,
+) {
     for mut smoker in smokers {
         smoker.cooldown_timer.tick(time.delta());
     }
