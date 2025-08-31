@@ -98,24 +98,16 @@ fn update_detection(
     {
         let old_detectee_status = detectee_status.clone();
 
-        let detection_increased_by_firing = match detectee_is_ship {
-            Some(_) => {
-                if !detectee_status
-                    .detection_increased_by_firing
-                    .tick(time.delta())
-                    .finished()
-                {
-                    true
-                } else {
-                    false
-                }
-            }
-            None => true,
-        };
+        let detection_increased_by_firing = detectee_is_ship.is_some_and(|_| {
+            !detectee_status
+                .detection_increased_by_firing
+                .tick(time.delta())
+                .finished()
+        });
 
         let base_detection_when_firing_through_smoke = detectee_is_ship
             .map(|ship| ship.template.detection_when_firing_through_smoke)
-            .unwrap_or(1_000_000.);
+            .unwrap_or(f32::MAX);
 
         detectee_status.is_detected = detectors.iter().any(|(detector_team, detector_trans)| {
             if detector_team == detectee_team {
