@@ -28,6 +28,7 @@ impl Plugin for NetworkingPlugin {
                 send_turret_state_updates,
                 send_health_updates,
                 send_torpedo_reload_updates,
+                send_smoke_consumable_state_updates,
             ),
         );
     }
@@ -62,6 +63,7 @@ fn stdout_handler(rx: Receiver<WrtsMatchMessage>) {
                     Message::Match2Client(Match2Client::SetTrans { .. })
                     | Message::Match2Client(Match2Client::SetTurretDirs { .. })
                     | Message::Match2Client(Match2Client::SetVelocity { .. })
+                    | Message::Match2Client(Match2Client::SetSmokeConsumableState { .. })
                     | Message::Match2Client(Match2Client::SetReloadedTorps { .. }) => {
                         trace!("Sending: {msg:?}")
                     }
@@ -337,43 +339,6 @@ fn read_messages(
                     msg_sender,
                     ship_id: ship,
                 });
-                // let Some(local) = shared_entities.get_by_shared(ship) else {
-                //     warn!("Client {msg_sender} sent message with bad id: {ship:?}");
-                //     continue;
-                // };
-                // if teams
-                //     .get(local)
-                //     .ok()
-                //     .and_then(|team| (team.0 == msg_sender).then_some(()))
-                //     .is_none()
-                // {
-                //     warn!(
-                //         "Client {msg_sender} tried to UseConsumableSmoke on an entity not owned by them"
-                //     );
-                //     continue;
-                // }
-
-                // let Ok((ship, _ship_trans)) = ships.get(local) else {
-                //     warn!("Client {msg_sender} tried to UseConsumableSmoke on a nonexistent ship");
-                //     continue;
-                // };
-
-                // if let Some(smoke) = ship.template.consumables.smoke() {
-                //     warn!(
-                //         "Client {msg_sender} tried to UseConsumableSmoke on a ship without smoke"
-                //     );
-                //     continue;
-                // }
-                // commands.entity(local).try_insert_if(
-                //     (SmokeDeploying {
-                //         action_timer: todo!(),
-                //         puff_timer: todo!(),
-                //     }),
-                //     || {
-                //         //
-                //         true
-                //     },
-                // );
             }
             Message::Client2Match(Client2Match::InitB { .. })
             | Message::Match2Client(_)
@@ -720,5 +685,46 @@ fn send_torpedo_reload_updates(
                 still_reloading: still_reloading.clone(),
             }),
         })
+    }
+}
+
+fn send_smoke_consumable_state_updates(
+    smokers: Query<(Entity, &SmokeConsumableState, Option<&SmokeDeploying>)>,
+    clients: Query<&ClientInfo>,
+    msgs_tx: Res<MessagesSend>,
+    shared_entities: Res<SharedEntityTracking>,
+) {
+    for (local, smoke_state, smoke_deploying) in smokers {
+        let Some(shared) = shared_entities.get_by_local(local) else {
+            continue;
+        };
+
+        let charges_unused = smoke_state.charges_unused.map(|x| x as u16);
+
+        let state = if let Some(smoke_deploying) = smoke_deploying {
+            wrts_messaging::SmokeConsumableState::Deploying {
+                charges_unused,
+                action_time_remaining: smoke_deploying.action_timer.remaining(),
+            }
+        } else {
+            if smoke_state.cooldown_timer.finished() {
+                wrts_messaging::SmokeConsumableState::Recharged { charges_unused }
+            } else {
+                wrts_messaging::SmokeConsumableState::Recharging {
+                    charges_unused,
+                    recharge_time_remaining: smoke_state.cooldown_timer.remaining(),
+                }
+            }
+        };
+
+        for client in clients {
+            msgs_tx.send(WrtsMatchMessage {
+                client: client.info.id,
+                msg: Message::Match2Client(Match2Client::SetSmokeConsumableState {
+                    id: shared,
+                    state,
+                }),
+            })
+        }
     }
 }

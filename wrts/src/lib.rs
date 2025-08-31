@@ -179,7 +179,7 @@ struct TorpedoReloadText;
 fn fire_torpedoes(
     mut gizmos: Gizmos,
     selected: Query<(Entity, &Ship, &Transform), With<Selected>>,
-    ships: Query<(&Team, &Transform, &Velocity), With<Ship>>,
+    ships: Query<(&Team, &Transform, &Velocity, &DetectionStatus), With<Ship>>,
     cursor_pos: Res<CursorWorldPos>,
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -206,8 +206,12 @@ fn fire_torpedoes(
     let min_dist = 100.;
     let max_dist = torps.range;
 
-    for (ship_team, ship_trans, ship_vel) in ships {
+    for (ship_team, ship_trans, ship_vel, ship_detection) in ships {
         if ship_team.is_this_client(*this_client) {
+            continue;
+        }
+
+        if *ship_detection != DetectionStatus::Detected {
             continue;
         }
 

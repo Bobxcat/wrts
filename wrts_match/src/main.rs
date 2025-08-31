@@ -122,7 +122,9 @@ fn torpedo_reloading(ships: Query<&mut Ship>, time: Res<Time>) {
 fn despawn_old_torpedoes(mut commands: Commands, torps: Query<(Entity, &Torpedo, &Transform)>) {
     for (torp_entity, torp, torp_trans) in torps {
         if torp_trans.translation.truncate().distance(torp.inital_pos) > torp.max_range {
-            commands.entity(torp_entity).despawn();
+            commands.queue(DespawnNetworkedEntityCommand {
+                entity: torp_entity,
+            });
         }
     }
 }

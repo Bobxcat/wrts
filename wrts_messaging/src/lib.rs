@@ -67,6 +67,21 @@ pub enum Client2Match {
     },
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub enum SmokeConsumableState {
+    Deploying {
+        charges_unused: Option<u16>,
+        action_time_remaining: Duration,
+    },
+    Recharging {
+        charges_unused: Option<u16>,
+        recharge_time_remaining: Duration,
+    },
+    Recharged {
+        charges_unused: Option<u16>,
+    },
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Match2Client {
     InitA {
@@ -110,6 +125,10 @@ pub enum Match2Client {
         id: SharedEntityId,
         pos: Vec2,
         radius: f32,
+    },
+    SetSmokeConsumableState {
+        id: SharedEntityId,
+        state: SmokeConsumableState,
     },
     SetReloadedTorps {
         id: SharedEntityId,

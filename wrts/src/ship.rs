@@ -26,7 +26,10 @@ impl Plugin for ShipDisplayPlugin {
             (
                 destroy_dead_ship_uis,
                 // UI element updaters
-                (update_torpedo_reload_display)
+                (
+                    update_torpedo_reload_display,
+                    update_smoke_consumable_display,
+                )
                     .after(destroy_dead_ship_uis)
                     .before(sort_ship_modifiers_display),
                 // ...
@@ -79,6 +82,23 @@ struct TorpedoReloadDisplay;
 #[derive(Component, Debug, Clone, Copy)]
 #[require(Node, Sprite)]
 struct TorpedoReloadDisplayTorpedoStatus;
+
+#[derive(Component, Debug, Clone, Copy)]
+pub struct SmokeConsumableState {
+    pub charges_unused: Option<u16>,
+    pub action_state: SmokeConsumableActionState,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum SmokeConsumableActionState {
+    Deploying { time_remaining: Duration },
+    Recharging { time_remaining: Duration },
+    Recharged,
+}
+
+#[derive(Component, Debug, Clone, Copy)]
+#[require(Node)]
+struct SmokeConsumableDisplay;
 
 fn update_torpedo_reload_display(
     mut commands: Commands,
@@ -192,6 +212,103 @@ fn update_torpedo_reload_display(
     }
 }
 
+fn update_smoke_consumable_display(
+    mut commands: Commands,
+    ships: Query<(Entity, &Ship, &SmokeConsumableState)>,
+    ship_modifiers_displays: Query<(Entity, &ShipModifiersDisplay, Option<&Children>)>,
+    mut smoke_consumable_displays: Query<(&SmokeConsumableDisplay, &Children)>,
+    mut text_query: Query<(&mut Text)>,
+    mut image_node_query: Query<(&mut ImageNode)>,
+) {
+    let total_sprite_size = vec2(15., 20.);
+
+    for (ship_entity, ship, smoke_state) in ships {
+        let Some((disp_entity, _, disp_children)) = ship_modifiers_displays
+            .iter()
+            .find(|(_, disp, _)| disp.tracked_ship == ship_entity)
+        else {
+            continue;
+        };
+        let Some(smoke) = ship.template.consumables.smoke() else {
+            continue;
+        };
+        let Some(smoke_consumable_display) = disp_children.and_then(|disp_children| {
+            disp_children
+                .iter()
+                .find(|e| smoke_consumable_displays.contains(*e))
+        }) else {
+            let id = commands
+                .spawn((
+                    SmokeConsumableDisplay,
+                    Node {
+                        //
+                        ..default()
+                    },
+                    children![
+                        // Charge count
+                        (
+                            Node {
+                                width: Val::Auto,
+                                height: Val::Px(total_sprite_size.y),
+                                margin: UiRect::all(Val::Px(3.)),
+                                ..default()
+                            },
+                            Text("".into())
+                        ),
+                        // Smoke icon
+                        (
+                            Node {
+                                width: Val::Px(total_sprite_size.x),
+                                height: Val::Px(total_sprite_size.y),
+                                margin: UiRect::all(Val::Px(3.)),
+                                ..default()
+                            },
+                            ImageNode::default()
+                        )
+                    ],
+                ))
+                .id();
+            commands.entity(disp_entity).add_child(id);
+            continue;
+        };
+
+        let (_smoke_consumable_display, smoke_consumable_display_children) =
+            smoke_consumable_displays
+                .get_mut(smoke_consumable_display)
+                .unwrap();
+
+        let mut charge_count_text = text_query
+            .get_mut(smoke_consumable_display_children[0])
+            .unwrap();
+
+        let mut smoke_icon = image_node_query
+            .get_mut(smoke_consumable_display_children[1])
+            .unwrap();
+
+        charge_count_text.0 = smoke_state
+            .charges_unused
+            .map_or("".into(), |n| format!("{}", n));
+
+        let charged_color = Color::linear_rgb(1., 1., 1.);
+
+        *smoke_icon = match smoke_state.action_state {
+            SmokeConsumableActionState::Deploying { time_remaining } => {
+                ImageNode::solid_color(Color::linear_rgb(0.3, 0.7, 0.7).mix(
+                    &Color::linear_rgb(0.7, 0.7, 0.3),
+                    time_remaining.as_secs_f32() / smoke.action_time.as_secs_f32(),
+                ))
+            }
+            SmokeConsumableActionState::Recharging { time_remaining } => {
+                ImageNode::solid_color(charged_color.mix(
+                    &Color::linear_rgb(0., 0., 0.),
+                    time_remaining.as_secs_f32() / smoke.cooldown.as_secs_f32(),
+                ))
+            }
+            SmokeConsumableActionState::Recharged => ImageNode::solid_color(charged_color),
+        }
+    }
+}
+
 fn update_ship_ui_position(
     camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -217,7 +334,6 @@ fn update_ship_ui_position(
 
         disp_node.left = Val::Px(pos.x - content_size.x / 2.);
         disp_node.top = Val::Px(pos.y + 20.);
-        // disp_node.bottom = Val::Px(window.height() - pos.y - 30. - content_size.y / 2.);
     }
 }
 
@@ -239,6 +355,7 @@ fn sort_ship_modifiers_display(
     ships: Query<(Entity, &Team), With<Ship>>,
     ship_modifiers_displays: Query<(Entity, &ShipModifiersDisplay, &Children)>,
     torpedo_reload_displays: Query<(), With<TorpedoReloadDisplay>>,
+    smoke_consumable_displays: Query<(), With<SmokeConsumableDisplay>>,
     this_client: Res<ThisClient>,
 ) {
     for (ship_entity, ship_team) in ships {
@@ -256,6 +373,8 @@ fn sort_ship_modifiers_display(
             .sorted_by_key(|&entity| {
                 if torpedo_reload_displays.contains(entity) {
                     0
+                } else if smoke_consumable_displays.contains(entity) {
+                    1
                 } else {
                     u32::MAX
                 }

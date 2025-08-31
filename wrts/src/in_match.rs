@@ -7,7 +7,7 @@ use crate::{
     AppState, Bullet, DetectionStatus, Health, MoveOrder, PlayerSettings, SmokePuff, Team, Torpedo,
     Velocity,
     networking::{ClientInfo, ServerConnection, ThisClient},
-    ship::{Ship, ShipModifiersDisplay, ShipUI, TurretState},
+    ship::{self, Ship, ShipModifiersDisplay, ShipUI, TurretState},
 };
 
 pub use shared_entity_tracking::SharedEntityTracking;
@@ -332,6 +332,43 @@ fn in_match_networking(
                     ))
                     .id();
                 shared_entities.insert(id, local);
+            }
+            Message::Match2Client(Match2Client::SetSmokeConsumableState { id, state }) => {
+                commands.queue(move |world: &mut World| {
+                    let Some(local) = world.resource::<SharedEntityTracking>().get_by_shared(id)
+                    else {
+                        return;
+                    };
+
+                    let mut entity = world.entity_mut(local);
+                    let new_state = match state {
+                        wrts_messaging::SmokeConsumableState::Deploying {
+                            charges_unused,
+                            action_time_remaining,
+                        } => ship::SmokeConsumableState {
+                            charges_unused,
+                            action_state: ship::SmokeConsumableActionState::Deploying {
+                                time_remaining: action_time_remaining,
+                            },
+                        },
+                        wrts_messaging::SmokeConsumableState::Recharging {
+                            charges_unused,
+                            recharge_time_remaining,
+                        } => ship::SmokeConsumableState {
+                            charges_unused,
+                            action_state: ship::SmokeConsumableActionState::Recharging {
+                                time_remaining: recharge_time_remaining,
+                            },
+                        },
+                        wrts_messaging::SmokeConsumableState::Recharged { charges_unused } => {
+                            ship::SmokeConsumableState {
+                                charges_unused,
+                                action_state: ship::SmokeConsumableActionState::Recharged,
+                            }
+                        }
+                    };
+                    entity.insert(new_state);
+                });
             }
             Message::Match2Client(Match2Client::SetReloadedTorps {
                 id,

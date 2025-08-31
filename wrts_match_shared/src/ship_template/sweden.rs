@@ -1,6 +1,6 @@
 use std::f32::consts::PI;
 
-use crate::ship_template::*;
+use crate::ship_template::{consumables::Smoke, *};
 
 impl ShipTemplate {
     /// https://en.wikipedia.org/wiki/HSwMS_%C3%96land_(J16)
