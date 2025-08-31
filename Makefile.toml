@@ -1,3 +1,7 @@
+[env]
+LIBRARY_EXTENSION = { source = "${CARGO_MAKE_RUST_TARGET_OS}", default_value = "unknown", mapping = { "linux" = "so", "macos" = "dylib", "windows" = "dll", "openbsd" = "so" } }
+BIN_EXTENSION = { source = "${CARGO_MAKE_RUST_TARGET_OS}", default_value = "unknown", mapping = { "linux" = "", "macos" = "???", "windows" = ".exe", "openbsd" = "???" } }
+
 [config]
 default_to_workspace = false
 
@@ -24,26 +28,18 @@ command = "cargo"
 args = ["build", "--profile", "${BUILD_PROFILE_TEXT}"]
 
 [tasks.client]
+dependencies = ["build_client"]
+command = "target/${DEBUG_OR_RELEASE_TEXT}/wrts${BIN_EXTENSION}"
+
+[tasks.build_client]
 command = "cargo"
-args = ["run", "-p", "wrts", "--profile", "${BUILD_PROFILE_TEXT}"]
+args = ["build", "-p", "wrts", "--profile", "${BUILD_PROFILE_TEXT}"]
 
 [tasks.server]
 dependencies = ["build_server"]
-command = "target/${DEBUG_OR_RELEASE_TEXT}/wrts_lobby.exe"
+command = "target/${DEBUG_OR_RELEASE_TEXT}/wrts_lobby${BIN_EXTENSION}"
+args = ["lobby"]
 
 [tasks.build_server]
-dependencies = ["build_match_copy_artifacts"]
 command = "cargo"
 args = ["build", "-p", "wrts_lobby", "--profile", "${BUILD_PROFILE_TEXT}"]
-
-[tasks.build_match_copy_artifacts]
-dependencies = ["build_match"]
-script_runner = "@shell"
-script = '''
-mkdir wrts_lobby/build_assets/
-cp target/${DEBUG_OR_RELEASE_TEXT}/wrts_match.exe wrts_lobby/build_assets/wrts_match.exe
-'''
-
-[tasks.build_match]
-command = "cargo"
-args = ["build", "-p", "wrts_match", "--profile", "${BUILD_PROFILE_TEXT}"]
