@@ -599,7 +599,7 @@ fn apply_velocity(q: Query<(&mut Transform, &Velocity)>, time: Res<Time>) {
     }
 }
 
-fn main() -> Result<()> {
+pub fn start_match() -> Result<()> {
     let exit = App::new()
         .init_resource::<GameRules>()
         .add_plugins(

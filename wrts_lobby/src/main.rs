@@ -9,6 +9,7 @@ use wrts_messaging::{
     Client2Lobby, ClientId, ClientSharedInfo, Lobby2Client, Message, RecvFromStream, SendToStream,
 };
 use wtransport::{Endpoint, Identity, ServerConfig, endpoint::IncomingSession};
+use clap::Parser;
 
 use crate::{
     clients::{ClientData, Clients, ClientsEvent},
@@ -303,39 +304,54 @@ async fn trace_client_events() {
     }
 }
 
+#[derive(Parser, Debug)]
+enum Args {
+    Lobby,
+    Match,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _tmp_dir = TempDirBuilder::build();
-    init_logging();
+    let args = Args::parse();
 
-    tokio::spawn(trace_client_events().instrument(info_span!("Trace Clients Events")));
+    match args {
+        Args::Lobby => {
+            let _tmp_dir = TempDirBuilder::build();
+            init_logging();
 
-    let config = ServerConfig::builder()
-        .with_bind_default(wrts_messaging::DEFAULT_PORT)
-        .with_identity(Identity::self_signed(["localhost"]).unwrap())
-        .keep_alive_interval(Some(Duration::from_secs(3)))
-        .build();
+            tokio::spawn(trace_client_events().instrument(info_span!("Trace Clients Events")));
 
-    let ep = Endpoint::server(config)?;
+            let config = ServerConfig::builder()
+                .with_bind_default(wrts_messaging::DEFAULT_PORT)
+                .with_identity(Identity::self_signed(["localhost"]).unwrap())
+                .keep_alive_interval(Some(Duration::from_secs(3)))
+                .build();
 
-    info!("Endpoint created");
+            let ep = Endpoint::server(config)?;
 
-    let mm = Matchmaker::spawn();
+            info!("Endpoint created");
 
-    for id in 0.. {
-        let client_id = ClientId(id);
-        info!("Open sessions: {}", ep.open_connections());
-        info!("Awaiting session {client_id}");
-        let session = ep.accept().await;
-        let mm_subscription = mm.lock().await.subscribe(client_id);
-        tokio::spawn(
-            handle_connection(NewConnectionInfo {
-                incoming_session: session,
-                client_id,
-                mm_subscription,
-            })
-            .instrument(info_span!("Client Connection", %client_id)),
-        );
+            let mm = Matchmaker::spawn();
+
+            for id in 0.. {
+                let client_id = ClientId(id);
+                info!("Open sessions: {}", ep.open_connections());
+                info!("Awaiting session {client_id}");
+                let session = ep.accept().await;
+                let mm_subscription = mm.lock().await.subscribe(client_id);
+                tokio::spawn(
+                    handle_connection(NewConnectionInfo {
+                        incoming_session: session,
+                        client_id,
+                        mm_subscription,
+                    })
+                    .instrument(info_span!("Client Connection", %client_id)),
+                );
+            }
+        }
+        Args::Match => {
+            wrts_match::start_match().expect("Couldn't start match");
+        }
     }
 
     Ok(())

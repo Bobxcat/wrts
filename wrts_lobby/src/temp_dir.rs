@@ -110,19 +110,6 @@ fn make_temp_dir() -> PathBuf {
     );
 }
 
-pub fn wrts_match_exe() -> &'static Path {
-    static PATH: LazyLock<PathBuf> = LazyLock::new(|| {
-        let data = include_bytes!("../build_assets/wrts_match.exe");
-        let path = temp_dir().join("wrts_match.exe");
-        let mut f = std::fs::File::create_new(&path).unwrap();
-        f.write_all(data).unwrap();
-        f.flush().unwrap();
-        path
-    });
-
-    &PATH
-}
-
 pub struct WrtsMatchProcess {
     pub process: Child,
     pub stdin: ChildStdin,
@@ -134,11 +121,12 @@ impl WrtsMatchProcess {
     pub async fn spawn() -> anyhow::Result<Self> {
         let log_path = format!("wrts_log_{:x}.txt", rand::random_range(0..(1024 * 1024)));
 
-        let mut process = Command::new(wrts_match_exe())
+        let mut process = Command::new(std::env::current_exe().expect("Expected to be running an exe"))
             // Disable coloring in bevy logs, since they are written to a `.txt` file
             .env("NO_COLOR", "1")
             // Enable verbose backtraces
             .env("BEVY_BACKTRACE", "full")
+            .arg("match")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(log_create(&log_path).unwrap())
