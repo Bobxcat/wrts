@@ -4,6 +4,7 @@ use bevy::{prelude::*, window::PrimaryWindow};
 use itertools::{Itertools, iproduct};
 use ordered_float::OrderedFloat;
 use wrts_match_shared::ship_template::ShipTemplate;
+use wrts_messaging::ClientId;
 
 use crate::{
     AppState, DetectionStatus, Health, MainCamera, MapZoom, PlayerSettings, Selected, Team,
@@ -36,6 +37,7 @@ impl Plugin for ShipDisplayPlugin {
                 sort_ship_modifiers_display,
                 update_ship_ui_position,
                 update_ship_sprites,
+                update_detection_indicator_display,
             )
                 .in_set(ShipDisplaySystem),
         );
@@ -58,21 +60,21 @@ pub struct Ship {
     /// in ascending order
     pub reloading_torp_volleys_remaining_time: Vec<Duration>,
 }
-#[derive(Component, Debug)]
-#[require(Node)]
-pub struct ShipUI {
-    pub tracked_ship: Entity,
-}
+
+/// Attached to `ShipUI` and its children
+#[derive(Component, Debug, Clone, Copy)]
+pub struct ShipUITrackedShip(pub Entity);
 
 #[derive(Component, Debug)]
-#[require(Text)]
-pub struct ShipNameTag;
+#[require(Node)]
+pub struct ShipUI;
+
+#[derive(Component, Debug)]
+pub struct ShipUIFirstRow;
 
 #[derive(Component, Debug, Clone, Copy)]
 #[require(Node)]
-pub struct ShipModifiersDisplay {
-    pub tracked_ship: Entity,
-}
+pub struct ShipModifiersDisplay;
 
 /// Has 1 child for each torpedo volley on this ship
 #[derive(Component, Debug, Clone, Copy)]
@@ -100,10 +102,19 @@ pub enum SmokeConsumableActionState {
 #[require(Node)]
 struct SmokeConsumableDisplay;
 
+#[derive(Component, Debug, Clone, Copy)]
+#[require(Node, ImageNode)]
+pub struct DetectionIndicatorDisplay;
+
 fn update_torpedo_reload_display(
     mut commands: Commands,
     ships: Query<(Entity, &Ship)>,
-    ship_modifiers_displays: Query<(Entity, &ShipModifiersDisplay, Option<&Children>)>,
+    ship_modifiers_displays: Query<(
+        Entity,
+        &ShipUITrackedShip,
+        &ShipModifiersDisplay,
+        Option<&Children>,
+    )>,
     mut torpedo_reload_displays: Query<(&TorpedoReloadDisplay, &Children)>,
     mut torpedo_reload_display_torpedo_statuses: Query<(
         &TorpedoReloadDisplayTorpedoStatus,
@@ -118,9 +129,9 @@ fn update_torpedo_reload_display(
     let total_sprite_size = vec2(6., 20.);
 
     for (ship_entity, ship) in ships {
-        let Some((disp_entity, _, disp_children)) = ship_modifiers_displays
+        let Some((disp_entity, _, _, disp_children)) = ship_modifiers_displays
             .iter()
-            .find(|(_, disp, _)| disp.tracked_ship == ship_entity)
+            .find(|(_, disp_tracked_ship, _, _)| disp_tracked_ship.0 == ship_entity)
         else {
             continue;
         };
@@ -130,11 +141,14 @@ fn update_torpedo_reload_display(
                 .find(|e| torpedo_reload_displays.contains(*e))
         }) else {
             if let Some(torps) = &ship.template.torpedoes {
-                let id = commands.spawn(TorpedoReloadDisplay).id();
+                let id = commands
+                    .spawn((ShipUITrackedShip(ship_entity), TorpedoReloadDisplay))
+                    .id();
                 let c = (0..torps.volleys)
                     .map(|_| {
                         commands
                             .spawn((
+                                ShipUITrackedShip(ship_entity),
                                 Node {
                                     width: Val::Px(total_sprite_size.x),
                                     height: Val::Px(total_sprite_size.y),
@@ -144,6 +158,7 @@ fn update_torpedo_reload_display(
                                 TorpedoReloadDisplayTorpedoStatus,
                                 ImageNode::default(),
                                 children![(
+                                    ShipUITrackedShip(ship_entity),
                                     Node {
                                         width: Val::Percent(100.),
                                         height: Val::Percent(100.),
@@ -215,7 +230,12 @@ fn update_torpedo_reload_display(
 fn update_smoke_consumable_display(
     mut commands: Commands,
     ships: Query<(Entity, &Ship, &SmokeConsumableState)>,
-    ship_modifiers_displays: Query<(Entity, &ShipModifiersDisplay, Option<&Children>)>,
+    ship_modifiers_displays: Query<(
+        Entity,
+        &ShipUITrackedShip,
+        &ShipModifiersDisplay,
+        Option<&Children>,
+    )>,
     mut smoke_consumable_displays: Query<(&SmokeConsumableDisplay, &Children)>,
     mut text_query: Query<(&mut Text)>,
     mut image_node_query: Query<(&mut ImageNode)>,
@@ -223,9 +243,9 @@ fn update_smoke_consumable_display(
     let total_sprite_size = vec2(15., 20.);
 
     for (ship_entity, ship, smoke_state) in ships {
-        let Some((disp_entity, _, disp_children)) = ship_modifiers_displays
+        let Some((disp_entity, _, _, disp_children)) = ship_modifiers_displays
             .iter()
-            .find(|(_, disp, _)| disp.tracked_ship == ship_entity)
+            .find(|(_, disp_tracked_ship, _, _)| disp_tracked_ship.0 == ship_entity)
         else {
             continue;
         };
@@ -239,6 +259,7 @@ fn update_smoke_consumable_display(
         }) else {
             let id = commands
                 .spawn((
+                    ShipUITrackedShip(ship_entity),
                     SmokeConsumableDisplay,
                     Node {
                         //
@@ -247,6 +268,7 @@ fn update_smoke_consumable_display(
                     children![
                         // Charge count
                         (
+                            ShipUITrackedShip(ship_entity),
                             Node {
                                 width: Val::Auto,
                                 height: Val::Px(total_sprite_size.y),
@@ -257,6 +279,7 @@ fn update_smoke_consumable_display(
                         ),
                         // Smoke icon
                         (
+                            ShipUITrackedShip(ship_entity),
                             Node {
                                 width: Val::Px(total_sprite_size.x),
                                 height: Val::Px(total_sprite_size.y),
@@ -309,20 +332,54 @@ fn update_smoke_consumable_display(
     }
 }
 
+fn update_detection_indicator_display(
+    ships: Query<(&Ship, &Team, &DetectionStatus)>,
+    detection_indicator_displays: Query<(
+        &DetectionIndicatorDisplay,
+        &ShipUITrackedShip,
+        &mut Node,
+        &mut ImageNode,
+    )>,
+    this_client: Res<ThisClient>,
+) {
+    let total_sprite_size = vec2(6., 20.);
+    for (_disp, tracked_ship, mut node, mut image) in detection_indicator_displays {
+        let Ok((_ship, ship_team, ship_detection)) = ships.get(tracked_ship.0) else {
+            continue;
+        };
+        if *ship_detection == DetectionStatus::Never || !ship_team.is_this_client(*this_client) {
+            node.width = Val::Px(0.);
+            node.height = Val::Px(0.);
+            *image = ImageNode::default();
+            continue;
+        }
+
+        match ship_detection {
+            DetectionStatus::Never => unreachable!(),
+            DetectionStatus::Detected => {
+                node.width = Val::Px(total_sprite_size.x);
+                node.height = Val::Px(total_sprite_size.y);
+                *image = ImageNode::solid_color(Color::srgb_u8(240, 208, 41));
+            }
+            DetectionStatus::UnDetected => {
+                node.width = Val::Px(total_sprite_size.x);
+                node.height = Val::Px(total_sprite_size.y);
+                *image = ImageNode::solid_color(Color::srgb_u8(28, 26, 12));
+            }
+        }
+    }
+}
+
 fn update_ship_ui_position(
     camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
-    window: Query<&Window, With<PrimaryWindow>>,
     ships: Query<&Transform>,
-    ship_modifiers_displays: Query<(&ShipUI, &mut Node, &ComputedNode)>,
+    ship_uis: Query<(&ShipUI, &ShipUITrackedShip, &mut Node, &ComputedNode)>,
 ) {
     let Ok((camera, camera_trans)) = camera.single() else {
         return;
     };
-    let Ok(window) = window.single() else {
-        return;
-    };
-    for (disp, mut disp_node, disp_computed_node) in ship_modifiers_displays {
-        let Ok(ship_trans) = ships.get(disp.tracked_ship) else {
+    for (_disp, disp_tracked, mut disp_node, disp_computed_node) in ship_uis {
+        let Ok(ship_trans) = ships.get(disp_tracked.0) else {
             continue;
         };
         let Ok(pos) = camera.world_to_viewport(camera_trans, ship_trans.translation) else {
@@ -339,11 +396,11 @@ fn update_ship_ui_position(
 
 fn destroy_dead_ship_uis(
     mut commands: Commands,
-    ship_uis: Query<(Entity, &ShipUI)>,
+    ship_uis: Query<(Entity, &ShipUI, &ShipUITrackedShip)>,
     ships: Query<(), With<Ship>>,
 ) {
-    for (ship_ui_entity, ship_ui) in ship_uis {
-        if !ships.contains(ship_ui.tracked_ship) {
+    for (ship_ui_entity, _ship_ui, ship_ui_tracked) in ship_uis {
+        if !ships.contains(ship_ui_tracked.0) {
             commands.entity(ship_ui_entity).despawn();
         }
     }
@@ -353,15 +410,15 @@ fn destroy_dead_ship_uis(
 fn sort_ship_modifiers_display(
     mut commands: Commands,
     ships: Query<(Entity, &Team), With<Ship>>,
-    ship_modifiers_displays: Query<(Entity, &ShipModifiersDisplay, &Children)>,
+    ship_modifiers_displays: Query<(Entity, &ShipUITrackedShip, &ShipModifiersDisplay, &Children)>,
     torpedo_reload_displays: Query<(), With<TorpedoReloadDisplay>>,
     smoke_consumable_displays: Query<(), With<SmokeConsumableDisplay>>,
     this_client: Res<ThisClient>,
 ) {
     for (ship_entity, ship_team) in ships {
-        let Some((disp_entity, _, disp_children)) = ship_modifiers_displays
+        let Some((disp_entity, _, _, disp_children)) = ship_modifiers_displays
             .iter()
-            .find(|(_, disp, _)| disp.tracked_ship == ship_entity)
+            .find(|(_, disp_tracked, _, _)| disp_tracked.0 == ship_entity)
         else {
             continue;
         };

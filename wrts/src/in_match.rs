@@ -7,7 +7,10 @@ use crate::{
     AppState, Bullet, DetectionStatus, Health, MoveOrder, PlayerSettings, SmokePuff, Team, Torpedo,
     Velocity,
     networking::{ClientInfo, ServerConnection, ThisClient},
-    ship::{self, Ship, ShipModifiersDisplay, ShipUI, TurretState},
+    ship::{
+        self, DetectionIndicatorDisplay, Ship, ShipModifiersDisplay, ShipUI, ShipUITrackedShip,
+        TurretState,
+    },
 };
 
 pub use shared_entity_tracking::SharedEntityTracking;
@@ -227,9 +230,8 @@ fn in_match_networking(
                 commands
                     .spawn((
                         StateScoped(AppState::InMatch),
-                        ShipUI {
-                            tracked_ship: local,
-                        },
+                        ShipUI,
+                        ShipUITrackedShip(local),
                         Node {
                             position_type: PositionType::Absolute,
                             flex_direction: FlexDirection::Column,
@@ -240,21 +242,32 @@ fn in_match_networking(
                     ))
                     .with_children(|commands| {
                         commands.spawn((
-                            crate::ship::ShipNameTag,
+                            crate::ship::ShipUIFirstRow,
                             Node {
                                 border: UiRect::all(Val::Px(2.)),
+                                flex_direction: FlexDirection::Row,
                                 align_items: AlignItems::Center,
                                 justify_content: JustifyContent::Center,
                                 ..default()
                             },
-                            Text(ship_base.to_name().to_string()),
+                            children![
+                                (
+                                    //
+                                    DetectionIndicatorDisplay,
+                                    ShipUITrackedShip(local),
+                                    ImageNode::default(),
+                                ),
+                                (
+                                    //
+                                    Text(ship_base.to_name().to_string()),
+                                )
+                            ],
                         ));
 
                         if Team(team).is_this_client(*this_client) {
                             commands.spawn((
-                                ShipModifiersDisplay {
-                                    tracked_ship: local,
-                                },
+                                ShipModifiersDisplay,
+                                ShipUITrackedShip(local),
                                 Node {
                                     border: UiRect::all(Val::Px(1.)),
                                     flex_direction: FlexDirection::Row,

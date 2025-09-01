@@ -530,6 +530,10 @@ impl Command for UseConsumableSmokeCommand {
         }
 
         if ship_smoke_state.cooldown_timer.finished() {
+            if let Some(charges_unused) = &mut ship_smoke_state.charges_unused {
+                *charges_unused -= 1;
+            }
+
             let smoke = ship.template.consumables.smoke().unwrap();
             ship_smoke_state.cooldown_timer.reset();
             world.entity_mut(ship_local).insert(SmokeDeploying {
