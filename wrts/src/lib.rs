@@ -22,6 +22,7 @@ use wrts_messaging::{Client2Match, ClientId, Message};
 
 use crate::{
     in_match::{InMatchPlugin, SharedEntityTracking},
+    math_utils::ExtremaByFloat,
     networking::{NetworkingPlugin, ServerConnection, ThisClient},
     ship::{Ship, ShipDisplayPlugin},
     ui::{in_game::InGameUIPlugin, lobby::LobbyUiPlugin},
@@ -541,6 +542,34 @@ fn update_selected_ship_orders(
         let mut new_move_order = None;
         let mut new_fire_target = None;
 
+        if mouse.just_pressed(MouseButton::Right) {
+            // See if we right-clicked on a ship
+            if let Some(new_targ) = all_ships.iter().find(|maybe_targ| {
+                !maybe_targ.2.is_this_client(*this_client)
+                    && *maybe_targ.3 != DetectionStatus::Never
+                    && maybe_targ.1.translation.truncate().distance(mouse_pos.0)
+                        <= SHIP_SELECTION_SIZE * zoom.0
+            }) {
+                new_fire_target = Some(Some(FireTarget { ship: new_targ.0 }));
+            } else {
+                // This is a move command
+                if only_modifier_keys_pressed(&keyboard, []) {
+                    new_move_order = Some(MoveOrder {
+                        waypoints: vec![mouse_pos.0],
+                    });
+                } else if only_modifier_keys_pressed(&keyboard, [KeyCode::ShiftLeft]) {
+                    if let Some(mut move_order) = ship.5 {
+                        move_order.waypoints.push(mouse_pos.0);
+                        new_move_order = Some(move_order.clone());
+                    } else {
+                        new_move_order = Some(MoveOrder {
+                            waypoints: vec![mouse_pos.0],
+                        });
+                    }
+                }
+            }
+        }
+
         if mouse.just_pressed(MouseButton::Left)
             && only_modifier_keys_pressed(&keyboard, [KeyCode::ControlLeft])
         {
@@ -559,25 +588,6 @@ fn update_selected_ship_orders(
             new_fire_target = Some(None);
         }
 
-        if mouse.just_pressed(MouseButton::Left)
-            && only_modifier_keys_pressed(&keyboard, [KeyCode::AltLeft])
-        {
-            new_move_order = Some(MoveOrder {
-                waypoints: vec![mouse_pos.0],
-            });
-        }
-        if mouse.just_pressed(MouseButton::Left)
-            && only_modifier_keys_pressed(&keyboard, [KeyCode::AltLeft, KeyCode::ShiftLeft])
-        {
-            if let Some(mut move_order) = ship.5 {
-                move_order.waypoints.push(mouse_pos.0);
-                new_move_order = Some(move_order.clone());
-            } else {
-                new_move_order = Some(MoveOrder {
-                    waypoints: vec![mouse_pos.0],
-                });
-            }
-        }
         if keyboard.just_pressed(KeyCode::KeyQ)
             && only_modifier_keys_pressed(&keyboard, [KeyCode::AltLeft])
         {
@@ -606,6 +616,50 @@ fn update_selected_ship_orders(
                 }
             }
         }
+    }
+}
+
+/// Indicates the ship closest to the cursor within the right distance
+#[derive(Component)]
+struct Hover;
+
+fn update_hover(
+    mut commands: Commands,
+    mouse_pos: Res<CursorWorldPos>,
+    ships: Query<(Entity, &Transform, &Ship, Option<&Hover>)>,
+    hover: Query<(Entity, &Hover)>,
+    zoom: Res<MapZoom>,
+) {
+    let mouse_pos = mouse_pos.0;
+    let Some((entity, _xfrm, _ship, maybe_hover, dist)) = ships
+        .into_iter()
+        .map(|(entity, xfrm, ship, maybe_hover)| {
+            (
+                entity,
+                xfrm,
+                ship,
+                maybe_hover,
+                mouse_pos.distance(xfrm.translation.xy()),
+            )
+        })
+        .min_by_f32(|(_, _, _, _, d)| *d)
+    else {
+        return;
+    };
+
+    if dist < SHIP_SELECTION_SIZE * zoom.0 {
+        if maybe_hover.is_none() {
+            // Need to put hover on this entity
+            commands.entity(entity).insert(Hover);
+
+            if let Ok((entity, _)) = hover.single() {
+                // Need to remove hover
+                commands.entity(entity).remove::<Hover>();
+            }
+        }
+    } else if let Ok((entity, _)) = hover.single() {
+        // Need to remove hover
+        commands.entity(entity).remove::<Hover>();
     }
 }
 
@@ -675,24 +729,33 @@ fn update_selection(
         .filter_map(|(ship, _, selected, _)| selected.map(|_| ship))
         .collect_vec();
 
-    if mouse.just_pressed(MouseButton::Left)
-        && only_modifier_keys_pressed(&keyboard, [KeyCode::ShiftLeft])
-    {
-        for (ship, ship_trans, _ship_selected, &ship_team) in &ships {
-            if !ship_team.is_this_client(*this_client) {
-                continue;
-            }
-            if mouse_pos.0.distance(ship_trans.translation.truncate())
-                <= SHIP_SELECTION_SIZE * zoom.0
-            {
+    if mouse.just_pressed(MouseButton::Left) {
+        if let Some((ship, _)) = ships
+            .iter()
+            .filter(|(_, _, _, ship_team)| ship_team.is_this_client(*this_client))
+            .map(|(ship, xfrm, _selected, _team)| {
+                (ship, xfrm.translation.xy().distance(mouse_pos.0))
+            })
+            .filter(|(_, d)| *d <= SHIP_SELECTION_SIZE * zoom.0)
+            .min_by_f32(|(_, d)| *d)
+        {
+            if only_modifier_keys_pressed(&keyboard, [KeyCode::ShiftLeft]) {
+                // Add to selection
+                commands.entity(ship).insert_if_new(Selected);
+            } else {
+                // Override selection
+                for old_ship in old_selection {
+                    if old_ship != ship {
+                        commands.entity(old_ship).remove::<Selected>();
+                    }
+                }
                 commands.entity(ship).insert_if_new(Selected);
             }
-        }
-    }
-
-    if keyboard.just_pressed(KeyCode::KeyQ) && only_modifier_keys_pressed(&keyboard, []) {
-        for ship in old_selection {
-            commands.entity(ship).remove::<Selected>();
+        } else {
+            // Clicked on nothing - empty the selection
+            for ship in old_selection {
+                commands.entity(ship).remove::<Selected>();
+            }
         }
     }
 }
@@ -741,6 +804,7 @@ pub fn run() {
                 update_bullet_displays,
                 update_torpedo_displays,
                 update_smoke_puff_displays,
+                update_hover,
             )
                 .run_if(in_state(AppState::InMatch)),
         )

@@ -126,3 +126,27 @@ pub(crate) fn _bullet_problem_newtons(g: f64, p: DVec2, muzzle_vel: f64, v: DVec
 
     t
 }
+
+pub trait ExtremaByFloat<T> {
+    fn min_by_f32(self, cb: impl Fn(&T) -> f32) -> Option<T>;
+}
+
+impl<T, I: Iterator<Item = T>> ExtremaByFloat<T> for I {
+    fn min_by_f32(self, cb: impl Fn(&T) -> f32) -> Option<T> {
+        let mut min = None;
+        let mut min_key = None;
+        for item in self {
+            if let Some(smallest) = min_key {
+                let key = cb(&item);
+                if key < smallest {
+                    min_key = Some(key);
+                    min = Some(item);
+                }
+            } else {
+                min_key = Some(cb(&item));
+                min = Some(item);
+            }
+        }
+        min
+    }
+}

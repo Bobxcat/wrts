@@ -7,7 +7,7 @@ use wrts_match_shared::ship_template::ShipTemplate;
 use wrts_messaging::ClientId;
 
 use crate::{
-    AppState, DetectionStatus, Health, MainCamera, MapZoom, PlayerSettings, Selected, Team,
+    AppState, DetectionStatus, Health, Hover, MainCamera, MapZoom, PlayerSettings, Selected, Team,
     networking::ThisClient,
 };
 
@@ -453,6 +453,7 @@ fn update_ship_sprites(
         Option<&Selected>,
         &DetectionStatus,
         &Health,
+        Option<&Hover>,
     )>,
     this_client: Res<ThisClient>,
     settings: Res<PlayerSettings>,
@@ -463,10 +464,11 @@ fn update_ship_sprites(
         Accurate,
         Simplified,
     }
-    for (team, ship, mut sprite, trans, selected, detection_status, health) in ships {
+    for (team, ship, mut sprite, trans, selected, detection_status, health, hover) in ships {
         let is_visible =
             team.is_this_client(*this_client) || *detection_status == DetectionStatus::Detected;
         let is_selected = selected.is_some();
+        let is_hovered = hover.is_some();
 
         let (display_type, sprite_size) = {
             let simplified_size = vec2(1., 1.) * settings.ship_icon_scale * zoom.0;
@@ -549,7 +551,7 @@ fn update_ship_sprites(
             );
         }
 
-        if is_visible {
+        if is_visible && (is_selected || is_hovered) {
             // Gun range circle
             if let Some(t) = ship
                 .template
