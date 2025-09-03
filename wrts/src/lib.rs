@@ -5,29 +5,19 @@ mod networking;
 mod ship;
 mod ui;
 
-use std::{
-    collections::{HashMap, HashSet},
-    convert::identity,
-    f32::consts::FRAC_PI_2,
-    hash::RandomState,
-    iter,
-};
+use std::{collections::HashMap, iter};
 
-use bevy::{
-    input::{InputSystem, mouse::MouseWheel},
-    prelude::*,
-    window::PrimaryWindow,
-};
+use bevy::prelude::*;
 use enum_map::{EnumMap, enum_map};
 use itertools::Itertools;
 use leafwing_input_manager::prelude::{DualAxislike, VirtualDPad};
 use serde::{Deserialize, Serialize};
-use wrts_messaging::{Client2Match, ClientId, Message};
+use wrts_messaging::ClientId;
 
 use crate::{
-    in_match::{InMatchPlugin, SharedEntityTracking},
-    input_handling::{InputAction, InputHandlingPlugin, InputHandlingSystem},
-    networking::{NetworkingPlugin, ServerConnection, ThisClient},
+    in_match::InMatchPlugin,
+    input_handling::{InputAction, InputHandlingPlugin, InputHandlingSystem, Keybind},
+    networking::{NetworkingPlugin, ThisClient},
     ship::{Ship, ShipDisplayPlugin},
     ui::{in_game::InGameUIPlugin, lobby::LobbyUiPlugin},
 };
@@ -51,26 +41,44 @@ struct TeamColors {
 #[derive(Serialize, Deserialize)]
 struct PlayerControls {
     move_camera: Box<dyn DualAxislike>,
-    button_controls: EnumMap<InputAction, Vec<KeyCode>>,
+    button_controls: EnumMap<InputAction, Keybind>,
 }
 
 impl Default for PlayerControls {
     fn default() -> Self {
+        // IMPORTANT NOTE:
+        // {This is automatically handled by the `Keybind` wrapper}
+        // ALL SINGLE BUTTON INPUTS MUST USE `ButtonlikeChord::from_single(my_button)`,
+        // NOT `ButtonlikeChord::new([my_button])`
+        //
+        // The leafwing library will not treat a `Chord` of one button
+        // correctly when it comes to clashing! A `Chord` with one item
+        // will ***never*** clash
+
         use InputAction::*;
+        use KeyCode::*;
         Self {
             move_camera: Box::new(VirtualDPad::wasd()),
             button_controls: enum_map! {
-                SetFireTarg => vec![],
-                SetWaypoint => vec![],
-                PushWaypoint => vec![],
-                //
-                UseConsumableSmoke => vec![],
+                SetSelectedShip => Keybind::new([MouseButton::Left]),
+                ClearSelectedShips => Keybind::new([KeyQ]).into(),
+                SetFireTarg => Keybind::new([MouseButton::Right]).into(),
+                ClearFireTarg => Keybind::new([ControlLeft, KeyQ]).into(),
+                SetWaypoint => Keybind::new([MouseButton::Right]).into(),
+                PushWaypoint => Keybind::new([ShiftLeft]).with(MouseButton::Right).into(),
+                ClearWaypoints => Keybind::new([AltLeft, KeyQ]).into(),
 
-                MoveCamera => unimplemented!("This control isn't a button input"),
+                FireTorpVolley => Keybind::new([ControlLeft]).with(MouseButton::Left).into(),
+
+                UseConsumableSmoke => Keybind::new([Digit1]).into(),
+
+                // Not a button input
+                MoveCamera => Default::default(),
             },
         }
     }
 }
+
 #[derive(Resource, Serialize, Deserialize)]
 struct PlayerSettings {
     username: String,
@@ -114,22 +122,6 @@ struct CursorWorldPos(Vec2);
 
 #[derive(Component)]
 struct MainCamera;
-
-fn update_cursor_world_pos(
-    mut cursor_pos: ResMut<CursorWorldPos>,
-    q_window: Query<&Window, With<PrimaryWindow>>,
-    q_camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
-) {
-    let (camera, camera_transform) = q_camera.single().unwrap();
-    let window = q_window.single().unwrap();
-    if let Some(world_position) = window
-        .cursor_position()
-        .and_then(|cursor| camera.viewport_to_world(camera_transform, cursor).ok())
-        .map(|ray| ray.origin.truncate())
-    {
-        cursor_pos.0 = world_position;
-    }
-}
 
 #[derive(Component, Debug, Default, Clone)]
 struct Velocity(pub Vec2);
@@ -351,17 +343,6 @@ fn make_camera(mut commands: Commands) {
     ));
 }
 
-fn update_map_zoom(mut mouse_scroll: EventReader<MouseWheel>, mut zoom: ResMut<MapZoom>) {
-    let scroll_speed = 0.2;
-    let scroll_parts = 4;
-    for scroll in mouse_scroll.read() {
-        for _ in 0..scroll_parts {
-            zoom.0 -= scroll_speed * scroll.y * zoom.0 * (1. / scroll_parts as f32);
-        }
-    }
-    zoom.0 = zoom.0.clamp(0.5, 50.);
-}
-
 fn update_selected_ship_orders_display(
     mut gizmos: Gizmos,
     ships_selected: Query<
@@ -436,6 +417,10 @@ fn draw_background(
     );
 }
 
+fn write_settings_to_file(settings: Res<PlayerSettings>) {
+    std::fs::write("SETTINGS.json", serde_json::to_string(&*settings).unwrap()).unwrap();
+}
+
 pub fn run() {
     // Note: if system A depends on system B or if system A is run in a later schedule (i.e. `Update` after `PreUpdate`),
     // then the `Commands` buffer will be flushed between system A and B
@@ -456,16 +441,9 @@ pub fn run() {
         //
         .insert_state(AppState::ConnectingToServer)
         //
+        .add_systems(Startup, write_settings_to_file)
         .add_systems(Startup, make_camera)
-        .add_systems(
-            PreUpdate,
-            (
-                update_cursor_world_pos.after(InputSystem),
-                update_map_zoom
-                    .after(InputSystem)
-                    .run_if(in_state(AppState::InMatch)),
-            ),
-        )
+        // .add_systems(PreUpdate, ())
         .add_systems(
             Update,
             (
