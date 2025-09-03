@@ -39,8 +39,8 @@ enum ClientState {
 }
 
 struct MatchmakerClientData {
+    disconnected: CancellationToken,
     tx: mpsc::Sender<Matchmaker2ClientHandler>,
-    // rx: mpsc::Receiver<ClientHandler2Matchmaker>,
     state: ClientState,
 }
 
@@ -198,6 +198,7 @@ async fn matchmaker_new_clients_router(
 
 async fn matchmaker_client_router(
     disconnect: CancellationToken,
+    disconnect_client: CancellationToken,
     tx: mpsc::Sender<MatchmakerMessage>,
     mut client_msgs: mpsc::Receiver<ClientHandler2Matchmaker>,
     client: ClientId,
@@ -217,7 +218,7 @@ async fn matchmaker_client_router(
             }
         }
     }
-    disconnect.cancel();
+    disconnect_client.cancel();
 }
 
 async fn matchmaker_runner(
@@ -236,7 +237,9 @@ async fn matchmaker_runner(
         let clients_disconnected = mm
             .connected_clients
             .iter()
-            .filter_map(|(cl, cl_data)| cl_data.tx.is_closed().then_some(*cl))
+            .filter_map(|(cl, cl_data)| {
+                (cl_data.disconnected.is_cancelled() || cl_data.tx.is_closed()).then_some(*cl)
+            })
             .collect_vec();
 
         for cl in clients_disconnected {
@@ -264,8 +267,10 @@ async fn matchmaker_runner(
             MatchmakerMessage::ClientJoined { subscribe } => {
                 let (mmtx, clrx) = mpsc::channel(1024);
                 let (cltx, mmrx) = mpsc::channel(1024);
+                let disconnect_client = CancellationToken::new();
                 tokio::spawn(matchmaker_client_router(
                     disconnect.clone(),
+                    disconnect_client.clone(),
                     msgs_tx.clone(),
                     mmrx,
                     subscribe.client_id,
@@ -274,6 +279,7 @@ async fn matchmaker_runner(
                 mm.connected_clients.insert(
                     subscribe.client_id,
                     MatchmakerClientData {
+                        disconnected: disconnect_client.clone(),
                         tx: mmtx,
                         state: ClientState::InLobby,
                     },
