@@ -1,10 +1,6 @@
 use std::{convert::identity, f32::consts::FRAC_PI_2};
 
 use bevy::{
-    ecs::system::{
-        StaticSystemParam, SystemParam,
-        lifetimeless::{SQuery, SRes},
-    },
     input::{InputSystem, mouse::MouseWheel},
     prelude::*,
     window::PrimaryWindow,
@@ -201,8 +197,8 @@ impl ButtonControl {
         }
     }
 
-    pub fn with(mut self, modifier: impl Into<KeybindKey>) -> Self {
-        self.modifiers.push(modifier.into());
+    pub fn with(mut self, modifiers: impl IntoIterator<Item = impl Into<KeybindKey>>) -> Self {
+        self.modifiers.extend(modifiers.into_iter().map(Into::into));
         self
     }
 
@@ -275,6 +271,13 @@ struct ButtonState {
     value: bool,
 }
 
+impl ButtonState {
+    fn push_value(&mut self, new_value: bool) {
+        self.prev_value = self.value;
+        self.value = new_value;
+    }
+}
+
 struct AxisState {
     value: f32,
 }
@@ -344,8 +347,10 @@ fn update_action_state(
         actions.axes[axis].value = value;
     }
 
-    let mut button_overrides: EnumMap<ButtonInputs, Vec<ButtonInputs>> = EnumMap::default();
-    let mut button_overriden_by: EnumMap<ButtonInputs, Vec<ButtonInputs>> = EnumMap::default();
+    let mut buttons_with_lower_priority: EnumMap<ButtonInputs, Vec<ButtonInputs>> =
+        EnumMap::default();
+    let mut buttons_with_higher_priority: EnumMap<ButtonInputs, Vec<ButtonInputs>> =
+        EnumMap::default();
 
     for button in ButtonInputs::iter() {
         let control = &actions.button_map.controls[button];
@@ -359,49 +364,17 @@ fn update_action_state(
             }
 
             if button.priority() > other.priority() {
-                button_overrides[button].push(other);
-                button_overriden_by[other].push(button);
-            } else if other_control.is_subset(control) {
-                button_overrides[button].push(other);
-                button_overriden_by[other].push(button);
+                buttons_with_lower_priority[button].push(other);
+                buttons_with_higher_priority[other].push(button);
+            } else if button.priority() == other.priority() && other_control.is_subset(control) {
+                buttons_with_lower_priority[button].push(other);
+                buttons_with_higher_priority[other].push(button);
             }
         }
     }
 
-    for button in ButtonInputs::iter() {
-        let all_modifiers_pressed = actions.button_map.controls[button]
-            .modifiers
-            .iter()
-            .all(|k| k.read_just_pressed(ctx));
-        let principle_pressed = actions.button_map.controls[button]
-            .principle
-            .read_pressed(ctx);
-        let principle_just_pressed = actions.button_map.controls[button]
-            .principle
-            .read_just_pressed(ctx);
-
-        let special_conditions_fulfilled =
-            button
-                .special_conditions()
-                .into_iter()
-                .all(|condition| match condition {
-                    SpecialCondition::HoveringOverEnemyShip => hovering_ships.single().is_ok(),
-                });
-
-        let state = &mut actions.buttons[button];
-
-        let is_now_pressed = match state.value {
-            true => special_conditions_fulfilled && all_modifiers_pressed && principle_pressed,
-            false => {
-                special_conditions_fulfilled && all_modifiers_pressed && principle_just_pressed
-            }
-        };
-
-        state.prev_value = state.value;
-        state.value = is_now_pressed;
-    }
-
-    return;
+    info!("LOWER={buttons_with_lower_priority:#?}");
+    info!("HIGHER={buttons_with_higher_priority:#?}");
 
     let mut has_completed: EnumMap<ButtonInputs, bool> = EnumMap::default();
     loop {
@@ -409,13 +382,54 @@ fn update_action_state(
             if has_completed[button] {
                 continue;
             }
-            if button_overrides[button].iter().any(|x| !has_completed[*x]) {
+            // We depend on the buttons with a higher priority having been computed
+            if buttons_with_higher_priority[button]
+                .iter()
+                .any(|x| !has_completed[*x])
+            {
+                continue;
+            }
+            if buttons_with_higher_priority[button]
+                .iter()
+                .any(|b| actions.buttons[*b].value)
+            {
+                actions.buttons[button].push_value(false);
+                has_completed[button] = true;
                 continue;
             }
 
-            //
+            let all_modifiers_pressed = actions.button_map.controls[button]
+                .modifiers
+                .iter()
+                .all(|k| k.read_pressed(ctx));
+            let principle_pressed = actions.button_map.controls[button]
+                .principle
+                .read_pressed(ctx);
+            let principle_just_pressed = actions.button_map.controls[button]
+                .principle
+                .read_just_pressed(ctx);
+
+            let special_conditions_fulfilled =
+                button
+                    .special_conditions()
+                    .into_iter()
+                    .all(|condition| match condition {
+                        SpecialCondition::HoveringOverEnemyShip => hovering_ships.single().is_ok(),
+                    });
+
+            let state = &mut actions.buttons[button];
+
+            let is_now_pressed = match state.value {
+                true => special_conditions_fulfilled && all_modifiers_pressed && principle_pressed,
+                false => {
+                    special_conditions_fulfilled && all_modifiers_pressed && principle_just_pressed
+                }
+            };
+
+            state.push_value(is_now_pressed);
+            has_completed[button] = true;
         }
-        if has_completed.iter().all(|(_, b)| *b) {
+        if has_completed.values().copied().all(identity) {
             break;
         }
     }
@@ -450,11 +464,14 @@ fn update_map_zoom(mut mouse_scroll: EventReader<MouseWheel>, mut zoom: ResMut<M
 
 fn update_hovering(
     mut commands: Commands,
-    ships: Query<(Entity, &Ship, &Transform, Option<&Hovering>)>,
+    ships: Query<(Entity, &Ship, &Transform, &DetectionStatus)>,
     cursor_pos: Res<CursorWorldPos>,
     zoom: Res<MapZoom>,
 ) {
-    for (ship, _ship, ship_trans, _) in ships {
+    for (ship, _ship, ship_trans, ship_detection) in ships {
+        if *ship_detection == DetectionStatus::Never {
+            continue;
+        }
         if cursor_pos.0.distance(ship_trans.translation.truncate())
             <= crate::SHIP_SELECTION_SIZE * zoom.0
         {
