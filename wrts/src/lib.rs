@@ -10,13 +10,15 @@ use std::{collections::HashMap, iter};
 use bevy::prelude::*;
 use enum_map::{EnumMap, enum_map};
 use itertools::Itertools;
-use leafwing_input_manager::prelude::{DualAxislike, VirtualDPad};
 use serde::{Deserialize, Serialize};
 use wrts_messaging::ClientId;
 
 use crate::{
     in_match::InMatchPlugin,
-    input_handling::{InputAction, InputHandlingPlugin, InputHandlingSystem, Keybind},
+    input_handling::{
+        AxisControl, AxisInputs, ButtonControl, ButtonInputs, InputHandlingPlugin,
+        InputHandlingSystem,
+    },
     networking::{NetworkingPlugin, ThisClient},
     ship::{Ship, ShipDisplayPlugin},
     ui::{in_game::InGameUIPlugin, lobby::LobbyUiPlugin},
@@ -40,40 +42,33 @@ struct TeamColors {
 
 #[derive(Serialize, Deserialize)]
 struct PlayerControls {
-    move_camera: Box<dyn DualAxislike>,
-    button_controls: EnumMap<InputAction, Keybind>,
+    axis_controls: EnumMap<AxisInputs, AxisControl>,
+    button_controls: EnumMap<ButtonInputs, ButtonControl>,
 }
 
 impl Default for PlayerControls {
     fn default() -> Self {
-        // IMPORTANT NOTE:
-        // {This is automatically handled by the `Keybind` wrapper}
-        // ALL SINGLE BUTTON INPUTS MUST USE `ButtonlikeChord::from_single(my_button)`,
-        // NOT `ButtonlikeChord::new([my_button])`
-        //
-        // The leafwing library will not treat a `Chord` of one button
-        // correctly when it comes to clashing! A `Chord` with one item
-        // will ***never*** clash
-
-        use InputAction::*;
+        use AxisInputs::*;
+        use ButtonInputs::*;
         use KeyCode::*;
         Self {
-            move_camera: Box::new(VirtualDPad::wasd()),
+            axis_controls: enum_map! {
+                MoveCameraX => AxisControl::Virtual { hi: KeyD.into(), lo: KeyA.into() },
+                MoveCameraY => AxisControl::Virtual { hi: KeyW.into(), lo: KeyS.into() },
+            },
+
             button_controls: enum_map! {
-                SetSelectedShip => Keybind::new([MouseButton::Left]),
-                ClearSelectedShips => Keybind::new([KeyQ]).into(),
-                SetFireTarg => Keybind::new([MouseButton::Right]).into(),
-                ClearFireTarg => Keybind::new([ControlLeft, KeyQ]).into(),
-                SetWaypoint => Keybind::new([MouseButton::Right]).into(),
-                PushWaypoint => Keybind::new([ShiftLeft]).with(MouseButton::Right).into(),
-                ClearWaypoints => Keybind::new([AltLeft, KeyQ]).into(),
+                SetSelectedShip => ButtonControl::new(MouseButton::Left),
+                ClearSelectedShips => ButtonControl::new(KeyQ),
+                SetFireTarg => ButtonControl::new(MouseButton::Right),
+                ClearFireTarg => ButtonControl::new_with(KeyQ, [ControlLeft]),
+                SetWaypoint => ButtonControl::new(MouseButton::Right),
+                PushWaypoint => ButtonControl::new_with(MouseButton::Right, [ShiftLeft]),
+                ClearWaypoints => ButtonControl::new_with(KeyQ, [AltLeft]),
 
-                FireTorpVolley => Keybind::new([ControlLeft]).with(MouseButton::Left).into(),
+                FireTorpVolley => ButtonControl::new_with(MouseButton::Left, [ControlLeft]),
 
-                UseConsumableSmoke => Keybind::new([Digit1]).into(),
-
-                // Not a button input
-                MoveCamera => Default::default(),
+                UseConsumableSmoke => ButtonControl::new(Digit1),
             },
         }
     }
@@ -420,7 +415,7 @@ fn draw_background(
 fn write_settings_to_file(settings: Res<PlayerSettings>) {
     std::fs::write(
         "player_settings/settings.json",
-        serde_json::to_string(&*settings).unwrap(),
+        serde_json::to_string_pretty(&*settings).unwrap(),
     )
     .unwrap();
 }

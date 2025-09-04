@@ -7,8 +7,9 @@ edition = "2024"
 wrts_messaging = { path = "../wrts_messaging" }
 wrts_match_shared = { path = "../wrts_match_shared" }
 
-bevy = { version = "0.16.1", features = ["track_location"] }
+bevy = { version = "0.16.1", features = ["track_location", "serialize"] }
 enum-map = { version = "2.7.3", features = ["serde"] }
+strum = { version = "0.27", features = ["derive"] }
 itertools = "0.14.0"
 ordered-float = "5.0.0"
 rand = "0.9.1"
@@ -24,7 +25,7 @@ slotmap = "1.0.7"
 tokio = { version = "1.47.1", features = ["rt", "sync"] }
 num-complex = "0.4.6"
 bevy_simple_text_input = "0.11.1"
-leafwing-input-manager = "0.17.1"
+# leafwing-input-manager = "0.17.1"
 
 [[bench]]
 name = "bench"

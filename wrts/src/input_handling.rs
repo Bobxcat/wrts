@@ -1,23 +1,18 @@
-use std::f32::consts::FRAC_PI_2;
+use std::{convert::identity, f32::consts::FRAC_PI_2};
 
 use bevy::{
-    ecs::system::lifetimeless::{SQuery, SRes},
+    ecs::system::{
+        StaticSystemParam, SystemParam,
+        lifetimeless::{SQuery, SRes},
+    },
     input::{InputSystem, mouse::MouseWheel},
     prelude::*,
     window::PrimaryWindow,
 };
+use enum_map::EnumMap;
 use itertools::Itertools;
-use leafwing_input_manager::{
-    Actionlike, InputControlKind,
-    buttonlike::ButtonValue,
-    clashing_inputs::BasicInputs,
-    plugin::InputManagerSystem,
-    prelude::{
-        updating::{CentralInputStore, InputRegistration, UpdatableInput},
-        *,
-    },
-};
 use serde::{Deserialize, Serialize};
+use strum::IntoEnumIterator;
 use wrts_messaging::{Client2Match, Message};
 
 use crate::{
@@ -37,31 +32,31 @@ pub struct InputHandlingPlugin;
 
 impl Plugin for InputHandlingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(InputManagerPlugin::<InputAction>::default())
+        app
             //
             .configure_sets(OnEnter(AppState::InMatch), InputHandlingSystem)
             .add_systems(
                 OnEnter(AppState::InMatch),
-                spawn_input_map.in_set(InputHandlingSystem),
+                spawn_action_state.in_set(InputHandlingSystem),
             )
             //
             .configure_sets(
                 PreUpdate,
-                InputHandlingSystem.run_if(in_state(AppState::InMatch)),
+                InputHandlingSystem
+                    .after(InputSystem)
+                    .run_if(in_state(AppState::InMatch)),
             )
             .add_systems(
                 PreUpdate,
                 (
-                    update_cursor_world_pos.after(InputSystem),
+                    update_action_state,
+                    update_cursor_world_pos,
                     update_hovering
-                        .before(InputManagerSystem::Filter)
-                        .before(InputManagerSystem::Accumulate)
-                        .before(InputManagerSystem::Update)
+                        .after(update_action_state)
                         .after(update_cursor_world_pos),
-                    update_map_zoom
-                        .after(InputSystem)
-                        .run_if(in_state(AppState::InMatch)),
-                ),
+                    update_map_zoom,
+                )
+                    .in_set(InputHandlingSystem),
             )
             //
             .configure_sets(
@@ -71,7 +66,7 @@ impl Plugin for InputHandlingPlugin {
             .add_systems(
                 Update,
                 (
-                    read_inputs,
+                    // read_inputs,
                     use_consumables,
                     update_selection,
                     update_selected_ship_orders.after(update_selection),
@@ -79,8 +74,7 @@ impl Plugin for InputHandlingPlugin {
                     update_camera,
                 )
                     .in_set(InputHandlingSystem),
-            )
-            .register_input_kind::<HoveringOverEnemyShip>(InputControlKind::Button);
+            );
     }
 }
 
@@ -88,67 +82,10 @@ impl Plugin for InputHandlingPlugin {
 #[derive(Component, Clone, Copy, PartialEq, Eq, Hash)]
 struct Hovering;
 
-/// https://docs.rs/leafwing-input-manager/latest/leafwing_input_manager/user_input/updating/trait.UpdatableInput.html
-///
-/// This is both an `UpdatableInput` *and* a `UserInput`, which
-/// reflects whether or not a single enemy ship is currently being hovered over
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Reflect, Serialize, Deserialize)]
-struct HoveringOverEnemyShip;
-
-impl<'w, 's> UpdatableInput for HoveringOverEnemyShip {
-    type SourceData = (
-        SQuery<(Entity, &'static Team), With<Hovering>>,
-        Option<SRes<ThisClient>>,
-    );
-
-    fn compute(
-        mut central_input_store: ResMut<CentralInputStore>,
-        source_data: bevy::ecs::system::StaticSystemParam<Self::SourceData>,
-    ) {
-        let (hovered, this_client) = source_data.into_inner();
-        let Some(this_client) = this_client else {
-            return;
-        };
-
-        let hovering_over_enemy = hovered
-            .single()
-            .is_ok_and(|(_, team)| !team.is_this_client(*this_client));
-        central_input_store.update_buttonlike(Self, ButtonValue::from_pressed(hovering_over_enemy));
-    }
-}
-
-impl UserInput for HoveringOverEnemyShip {
-    fn kind(&self) -> InputControlKind {
-        InputControlKind::Button
-    }
-
-    fn decompose(&self) -> BasicInputs {
-        BasicInputs::Simple(Box::new(Self))
-    }
-}
-
-impl Buttonlike for HoveringOverEnemyShip {
-    fn pressed(&self, input_store: &updating::CentralInputStore, _gamepad: Entity) -> bool {
-        input_store.pressed(&Self)
-    }
-}
-
 #[derive(
-    Actionlike,
-    Serialize,
-    Deserialize,
-    PartialEq,
-    Eq,
-    Hash,
-    Clone,
-    Copy,
-    Debug,
-    Reflect,
-    enum_map::Enum,
+    Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Copy, Debug, enum_map::Enum, strum::EnumIter,
 )]
-pub enum InputAction {
-    #[actionlike(DualAxis)]
-    MoveCamera,
+pub enum ButtonInputs {
     SetSelectedShip,
     ClearSelectedShips,
 
@@ -163,11 +100,57 @@ pub enum InputAction {
     UseConsumableSmoke,
 }
 
+#[derive(Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Copy, Debug)]
+enum SpecialCondition {
+    HoveringOverEnemyShip,
+}
+
+impl ButtonInputs {
+    fn special_conditions(self) -> Vec<SpecialCondition> {
+        match self {
+            ButtonInputs::SetFireTarg => vec![SpecialCondition::HoveringOverEnemyShip],
+            _ => vec![],
+        }
+    }
+
+    fn priority(self) -> i32 {
+        match self {
+            ButtonInputs::SetFireTarg => 1,
+            ButtonInputs::ClearFireTarg
+            | ButtonInputs::SetWaypoint
+            | ButtonInputs::PushWaypoint
+            | ButtonInputs::ClearWaypoints
+            | ButtonInputs::FireTorpVolley
+            | ButtonInputs::UseConsumableSmoke
+            | ButtonInputs::SetSelectedShip
+            | ButtonInputs::ClearSelectedShips => 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum KeybindKey {
     Gamepad(GamepadButton),
     Keyboard(KeyCode),
     Mouse(MouseButton),
+}
+
+impl KeybindKey {
+    fn read_pressed(&self, ctx: ControlReadCtx) -> bool {
+        match self {
+            KeybindKey::Gamepad(b) => ctx.gamepad.map(|g| g.pressed(*b)).unwrap_or(false),
+            KeybindKey::Keyboard(b) => ctx.keyboard.pressed(*b),
+            KeybindKey::Mouse(b) => ctx.mouse.pressed(*b),
+        }
+    }
+
+    fn read_just_pressed(&self, ctx: ControlReadCtx) -> bool {
+        match self {
+            KeybindKey::Gamepad(b) => ctx.gamepad.map(|g| g.just_pressed(*b)).unwrap_or(false),
+            KeybindKey::Keyboard(b) => ctx.keyboard.just_pressed(*b),
+            KeybindKey::Mouse(b) => ctx.mouse.just_pressed(*b),
+        }
+    }
 }
 
 impl From<GamepadButton> for KeybindKey {
@@ -188,99 +171,254 @@ impl From<MouseButton> for KeybindKey {
     }
 }
 
-enum KeybindClassify {
-    Empty,
-    Single(KeybindKey),
-    Chord(ButtonlikeChord),
+#[derive(Debug, Clone, Copy)]
+struct ControlReadCtx<'a> {
+    gamepad: Option<&'a Gamepad>,
+    keyboard: &'a ButtonInput<KeyCode>,
+    mouse: &'a ButtonInput<MouseButton>,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Keybind {
-    keys: Vec<KeybindKey>,
-    #[serde(skip)]
-    has_hovering_over_enemy_ship: bool,
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ButtonControl {
+    principle: KeybindKey,
+    modifiers: Vec<KeybindKey>,
 }
 
-impl Keybind {
-    pub fn new(buttons: impl IntoIterator<Item = impl Into<KeybindKey>>) -> Self {
+impl ButtonControl {
+    /// * `principle` - the key that must be `just_pressed` while *all* `modifiers` are
+    /// pressed in order for this control to be considered activated
+    pub fn new(principle: impl Into<KeybindKey>) -> Self {
+        Self::new_with(principle, std::iter::empty::<KeybindKey>())
+    }
+
+    pub fn new_with(
+        principle: impl Into<KeybindKey>,
+        modifiers: impl IntoIterator<Item = impl Into<KeybindKey>>,
+    ) -> Self {
         Self {
-            keys: buttons.into_iter().map(Into::into).collect_vec(),
-            has_hovering_over_enemy_ship: false,
+            principle: principle.into(),
+            modifiers: modifiers.into_iter().map(Into::into).collect_vec(),
         }
     }
 
-    pub fn with(mut self, button: impl Into<KeybindKey>) -> Self {
-        self.keys.push(button.into());
+    pub fn with(mut self, modifier: impl Into<KeybindKey>) -> Self {
+        self.modifiers.push(modifier.into());
         self
     }
 
-    fn full_len(&self) -> usize {
-        self.keys.len() + self.has_hovering_over_enemy_ship as usize
+    /// If `self` is a subset of `other`, and they both have the same principle key
+    fn is_subset(&self, other: &Self) -> bool {
+        self.principle == other.principle
+            && self
+                .modifiers
+                .iter()
+                .copied()
+                .all(|k| other.modifiers.contains(&k))
     }
 
-    fn classify(&self) -> KeybindClassify {
-        match self.full_len() {
-            0 => KeybindClassify::Empty,
-            // FIXME: Single crashes if it's not a keybind, and is instead something like "HoveringOverEnemyShip"
-            1 => KeybindClassify::Single(
-                self.keys
-                    .get(0)
-                    .cloned()
-                    .expect("Can't have a `KeybindClassify::Single` which isn't a keybind"),
-            ),
-            _ => {
-                let mut gamepads = vec![];
-                let mut keyboards = vec![];
-                let mut mouses = vec![];
-                for key in self.keys.clone() {
-                    match key {
-                        KeybindKey::Gamepad(b) => gamepads.push(b),
-                        KeybindKey::Keyboard(b) => keyboards.push(b),
-                        KeybindKey::Mouse(b) => mouses.push(b),
-                    }
+    fn clashes(&self, other: &Self) -> bool {
+        self.is_subset(other) || other.is_subset(self)
+    }
+}
+
+struct ButtonMap {
+    controls: EnumMap<ButtonInputs, ButtonControl>,
+}
+
+#[derive(
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Hash,
+    Clone,
+    Copy,
+    Debug,
+    Reflect,
+    enum_map::Enum,
+    strum::EnumIter,
+)]
+pub enum AxisInputs {
+    MoveCameraY,
+    MoveCameraX,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AxisControl {
+    Gamepad(GamepadAxis),
+    Virtual { hi: KeybindKey, lo: KeybindKey },
+}
+
+impl AxisControl {
+    fn read(&self, ctx: ControlReadCtx) -> f32 {
+        match self {
+            AxisControl::Gamepad(axis) => ctx.gamepad.and_then(|g| g.get(*axis)).unwrap_or(0.),
+            AxisControl::Virtual { hi, lo } => {
+                if hi.read_pressed(ctx) {
+                    1.
+                } else if lo.read_pressed(ctx) {
+                    -1.
+                } else {
+                    0.
                 }
-
-                let hovering = self
-                    .has_hovering_over_enemy_ship
-                    .then_some(HoveringOverEnemyShip);
-
-                KeybindClassify::Chord(
-                    ButtonlikeChord::new(gamepads)
-                        .with_multiple(keyboards)
-                        .with_multiple(mouses)
-                        .with_multiple(hovering),
-                )
             }
         }
     }
 }
 
-fn read_inputs(
-    input_store: Res<CentralInputStore>,
-    input_map: Res<InputMap<InputAction>>,
-    actions: Res<ActionState<InputAction>>,
-    mut prev: Local<Option<ActionState<InputAction>>>,
-) {
-    let prev = prev.get_or_insert_default();
-    if &*actions == prev {
-        return;
+struct AxisMap {
+    controls: EnumMap<AxisInputs, AxisControl>,
+}
+
+struct ButtonState {
+    prev_value: bool,
+    value: bool,
+}
+
+struct AxisState {
+    value: f32,
+}
+
+#[derive(Resource)]
+struct ActionState {
+    button_map: ButtonMap,
+    buttons: EnumMap<ButtonInputs, ButtonState>,
+    axis_map: AxisMap,
+    axes: EnumMap<AxisInputs, AxisState>,
+}
+
+impl ActionState {
+    pub fn pressed(&self, action: ButtonInputs) -> bool {
+        self.buttons[action].value
     }
 
-    info!(
-        "DEC SetFireTarg={:?}, SetWaypoint={:?}, clashes={}",
-        input_map.decomposed(&InputAction::SetFireTarg),
-        input_map.decomposed(&InputAction::SetWaypoint),
-        input_map.decomposed(&InputAction::SetFireTarg)[0]
-            .clashes_with(&input_map.decomposed(&InputAction::SetWaypoint)[0]),
-    );
+    pub fn just_pressed(&self, action: ButtonInputs) -> bool {
+        self.buttons[action].value && !self.buttons[action].prev_value
+    }
 
-    info!(
-        "hovering={}, SetFireTarg={:?}, SetWaypoint={:?}",
-        input_store.button_value(&HoveringOverEnemyShip),
-        actions.pressed(&InputAction::SetFireTarg),
-        actions.pressed(&InputAction::SetWaypoint)
-    );
-    *prev = actions.clone();
+    pub fn read_axis(&self, axis: AxisInputs) -> f32 {
+        self.axes[axis].value
+    }
+}
+
+fn spawn_action_state(mut commands: Commands, settings: Res<PlayerSettings>) {
+    let button_map = ButtonMap {
+        controls: settings.controls.button_controls.clone(),
+    };
+
+    let axis_map = AxisMap {
+        controls: settings.controls.axis_controls.clone(),
+    };
+
+    let action_state = ActionState {
+        button_map,
+        buttons: EnumMap::from_fn(|_| ButtonState {
+            prev_value: false,
+            value: false,
+        }),
+        axis_map,
+        axes: EnumMap::from_fn(|_| AxisState { value: 0. }),
+    };
+
+    commands.insert_resource(action_state);
+}
+
+fn update_action_state(
+    mut actions: ResMut<ActionState>,
+    gamepads: Query<(&Name, &Gamepad)>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+
+    hovering_ships: Query<&Hovering>,
+) {
+    let (_gamepad_name, gamepad) = gamepads.single().ok().unzip();
+    let ctx = ControlReadCtx {
+        gamepad,
+        keyboard: &*keyboard,
+        mouse: &*mouse,
+    };
+
+    for axis in AxisInputs::iter() {
+        let control = &actions.axis_map.controls[axis];
+        let value = control.read(ctx);
+        actions.axes[axis].value = value;
+    }
+
+    let mut button_overrides: EnumMap<ButtonInputs, Vec<ButtonInputs>> = EnumMap::default();
+    let mut button_overriden_by: EnumMap<ButtonInputs, Vec<ButtonInputs>> = EnumMap::default();
+
+    for button in ButtonInputs::iter() {
+        let control = &actions.button_map.controls[button];
+        for other in ButtonInputs::iter() {
+            if button == other {
+                continue;
+            }
+            let other_control = &actions.button_map.controls[other];
+            if !control.clashes(other_control) {
+                continue;
+            }
+
+            if button.priority() > other.priority() {
+                button_overrides[button].push(other);
+                button_overriden_by[other].push(button);
+            } else if other_control.is_subset(control) {
+                button_overrides[button].push(other);
+                button_overriden_by[other].push(button);
+            }
+        }
+    }
+
+    for button in ButtonInputs::iter() {
+        let all_modifiers_pressed = actions.button_map.controls[button]
+            .modifiers
+            .iter()
+            .all(|k| k.read_just_pressed(ctx));
+        let principle_pressed = actions.button_map.controls[button]
+            .principle
+            .read_pressed(ctx);
+        let principle_just_pressed = actions.button_map.controls[button]
+            .principle
+            .read_just_pressed(ctx);
+
+        let special_conditions_fulfilled =
+            button
+                .special_conditions()
+                .into_iter()
+                .all(|condition| match condition {
+                    SpecialCondition::HoveringOverEnemyShip => hovering_ships.single().is_ok(),
+                });
+
+        let state = &mut actions.buttons[button];
+
+        let is_now_pressed = match state.value {
+            true => special_conditions_fulfilled && all_modifiers_pressed && principle_pressed,
+            false => {
+                special_conditions_fulfilled && all_modifiers_pressed && principle_just_pressed
+            }
+        };
+
+        state.prev_value = state.value;
+        state.value = is_now_pressed;
+    }
+
+    return;
+
+    let mut has_completed: EnumMap<ButtonInputs, bool> = EnumMap::default();
+    loop {
+        for button in ButtonInputs::iter() {
+            if has_completed[button] {
+                continue;
+            }
+            if button_overrides[button].iter().any(|x| !has_completed[*x]) {
+                continue;
+            }
+
+            //
+        }
+        if has_completed.iter().all(|(_, b)| *b) {
+            break;
+        }
+    }
 }
 
 fn update_cursor_world_pos(
@@ -327,45 +465,9 @@ fn update_hovering(
     }
 }
 
-fn spawn_input_map(mut commands: Commands, settings: Res<PlayerSettings>) {
-    let mut input_map = InputMap::default();
-
-    input_map.insert_dual_axis(InputAction::MoveCamera, GamepadStick::LEFT);
-    input_map.insert_dual_axis_boxed(
-        InputAction::MoveCamera,
-        settings.controls.move_camera.clone(),
-    );
-
-    for (action, inputs) in &settings.controls.button_controls {
-        if Actionlike::input_control_kind(&action) != InputControlKind::Button {
-            continue;
-        }
-        let mut inputs = inputs.clone();
-        if action == InputAction::SetFireTarg {
-            inputs.has_hovering_over_enemy_ship = true;
-        }
-        info!(
-            "{:?} -> {}",
-            action,
-            serde_json::to_string(&inputs).unwrap()
-        );
-
-        match inputs.classify() {
-            KeybindClassify::Empty => input_map.insert(action, ButtonlikeChord::default()),
-            KeybindClassify::Single(KeybindKey::Gamepad(b)) => input_map.insert(action, b),
-            KeybindClassify::Single(KeybindKey::Keyboard(b)) => input_map.insert(action, b),
-            KeybindClassify::Single(KeybindKey::Mouse(b)) => input_map.insert(action, b),
-            KeybindClassify::Chord(b) => input_map.insert(action, b),
-        };
-    }
-
-    commands.insert_resource(input_map);
-    commands.init_resource::<ActionState<InputAction>>();
-}
-
 fn update_camera(
     mut camera: Query<(&mut Projection, &mut Transform), With<MainCamera>>,
-    actions: Res<ActionState<InputAction>>,
+    actions: Res<ActionState>,
     zoom: Res<MapZoom>,
     time: Res<Time>,
 ) {
@@ -375,7 +477,11 @@ fn update_camera(
     };
 
     proj.scale = zoom.0;
-    let dir = actions.clamped_axis_pair(&InputAction::MoveCamera);
+    let dir = vec2(
+        actions.read_axis(AxisInputs::MoveCameraX),
+        actions.read_axis(AxisInputs::MoveCameraY),
+    )
+    .normalize_or_zero();
     camera.1.translation += (dir * 200. * zoom.0 * time.delta_secs()).extend(0.);
 }
 
@@ -383,7 +489,7 @@ fn update_selection(
     mut commands: Commands,
     ships: Query<(Entity, &Transform, Option<&Selected>, &Team), With<Ship>>,
     hovering: Query<(Entity, &Team, &Hovering)>,
-    actions: Res<ActionState<InputAction>>,
+    actions: Res<ActionState>,
     this_client: Res<ThisClient>,
 ) {
     let old_selection = ships
@@ -391,7 +497,7 @@ fn update_selection(
         .filter_map(|(ship, _, selected, _)| selected.map(|_| ship))
         .collect_vec();
 
-    if actions.just_pressed(&InputAction::SetSelectedShip) {
+    if actions.just_pressed(ButtonInputs::SetSelectedShip) {
         for (ship, ship_team, _hovering) in hovering {
             if ship_team.is_this_client(*this_client) {
                 commands.entity(ship).insert_if_new(Selected);
@@ -399,7 +505,7 @@ fn update_selection(
         }
     }
 
-    if actions.just_pressed(&InputAction::ClearSelectedShips) {
+    if actions.just_pressed(ButtonInputs::ClearSelectedShips) {
         for ship in old_selection {
             commands.entity(ship).remove::<Selected>();
         }
@@ -408,7 +514,7 @@ fn update_selection(
 
 fn update_selected_ship_orders(
     mut commands: Commands,
-    actions: Res<ActionState<InputAction>>,
+    actions: Res<ActionState>,
     mouse_pos: Res<CursorWorldPos>,
     all_ships: Query<(Entity, &Transform, &Team, &DetectionStatus), With<Ship>>,
     mut ships_selected: Query<(
@@ -428,7 +534,7 @@ fn update_selected_ship_orders(
         let mut new_move_order = None;
         let mut new_fire_target = None;
 
-        if actions.just_pressed(&InputAction::SetFireTarg) {
+        if actions.just_pressed(ButtonInputs::SetFireTarg) {
             if let Some(new_targ) = all_ships.iter().find(|maybe_targ| {
                 !maybe_targ.2.is_this_client(*this_client)
                     && *maybe_targ.3 != DetectionStatus::Never
@@ -438,16 +544,16 @@ fn update_selected_ship_orders(
                 new_fire_target = Some(Some(FireTarget { ship: new_targ.0 }));
             }
         }
-        if actions.just_pressed(&InputAction::ClearFireTarg) {
+        if actions.just_pressed(ButtonInputs::ClearFireTarg) {
             new_fire_target = Some(None);
         }
 
-        if actions.just_pressed(&InputAction::SetWaypoint) {
+        if actions.just_pressed(ButtonInputs::SetWaypoint) {
             new_move_order = Some(MoveOrder {
                 waypoints: vec![mouse_pos.0],
             });
         }
-        if actions.just_pressed(&InputAction::PushWaypoint) {
+        if actions.just_pressed(ButtonInputs::PushWaypoint) {
             if let Some(mut move_order) = ship.5 {
                 move_order.waypoints.push(mouse_pos.0);
                 new_move_order = Some(move_order.clone());
@@ -457,7 +563,7 @@ fn update_selected_ship_orders(
                 });
             }
         }
-        if actions.just_pressed(&InputAction::ClearWaypoints) {
+        if actions.just_pressed(ButtonInputs::ClearWaypoints) {
             new_move_order = Some(MoveOrder { waypoints: vec![] });
         }
 
@@ -488,7 +594,7 @@ fn update_selected_ship_orders(
 
 fn use_consumables(
     selected_ships: Query<(Entity, &Ship), With<Selected>>,
-    actions: Res<ActionState<InputAction>>,
+    actions: Res<ActionState>,
     mut server: ResMut<ServerConnection>,
     shared_entities: Res<SharedEntityTracking>,
 ) {
@@ -497,7 +603,7 @@ fn use_consumables(
     };
     let consumables = &selected_ship.template.consumables;
     // Smoke
-    if actions.just_pressed(&InputAction::UseConsumableSmoke) {
+    if actions.just_pressed(ButtonInputs::UseConsumableSmoke) {
         if consumables.smoke().is_some() {
             let _ = server.send(Message::Client2Match(Client2Match::UseConsumableSmoke {
                 ship: shared_entities[selected_entity],
@@ -510,7 +616,7 @@ fn fire_torpedoes(
     mut gizmos: Gizmos,
     selected: Query<(Entity, &Ship, &Transform), With<Selected>>,
     ships: Query<(&Team, &Transform, &Velocity, &DetectionStatus), With<Ship>>,
-    actions: Res<ActionState<InputAction>>,
+    actions: Res<ActionState>,
     cursor_pos: Res<CursorWorldPos>,
     shared_entities: Res<SharedEntityTracking>,
     mut server: ResMut<ServerConnection>,
@@ -593,7 +699,7 @@ fn fire_torpedoes(
                 angles_color,
             );
 
-            if actions.just_pressed(&InputAction::FireTorpVolley) {
+            if actions.just_pressed(ButtonInputs::FireTorpVolley) {
                 let _ = server.send(Message::Client2Match(Client2Match::LaunchTorpedoVolley {
                     ship: shared_entities[selected],
                     dir: fire_dir,
