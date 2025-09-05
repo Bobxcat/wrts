@@ -18,12 +18,7 @@ pub fn initalize_game(mut commands: Commands, teams: Query<&ClientInfo>) {
             0 => std::f32::consts::PI,
             _ => 0.,
         });
-        let ships = [
-            ShipTemplateId::oland(),
-            ShipTemplateId::bismarck(),
-            ShipTemplateId::kiev(),
-            ShipTemplateId::nagato(),
-        ];
+        let ships = ShipTemplateId::all_ships();
         for ship_idx in 0..ships.len() {
             let offset_side = if ship_idx % 2 == 0 { -1. } else { 1. };
             let offset_ct = (ship_idx + 1).div_euclid(2) as f32;

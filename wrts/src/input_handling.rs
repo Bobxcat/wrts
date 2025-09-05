@@ -62,7 +62,6 @@ impl Plugin for InputHandlingPlugin {
             .add_systems(
                 Update,
                 (
-                    // read_inputs,
                     use_consumables,
                     update_selection,
                     update_selected_ship_orders.after(update_selection),
@@ -373,8 +372,8 @@ fn update_action_state(
         }
     }
 
-    info!("LOWER={buttons_with_lower_priority:#?}");
-    info!("HIGHER={buttons_with_higher_priority:#?}");
+    // info!("LOWER={buttons_with_lower_priority:#?}");
+    // info!("HIGHER={buttons_with_higher_priority:#?}");
 
     let mut has_completed: EnumMap<ButtonInputs, bool> = EnumMap::default();
     loop {
@@ -464,12 +463,13 @@ fn update_map_zoom(mut mouse_scroll: EventReader<MouseWheel>, mut zoom: ResMut<M
 
 fn update_hovering(
     mut commands: Commands,
-    ships: Query<(Entity, &Ship, &Transform, &DetectionStatus)>,
+    ships: Query<(Entity, &Team, &Ship, &Transform, &DetectionStatus)>,
     cursor_pos: Res<CursorWorldPos>,
     zoom: Res<MapZoom>,
+    this_client: Res<ThisClient>,
 ) {
-    for (ship, _ship, ship_trans, ship_detection) in ships {
-        if *ship_detection == DetectionStatus::Never {
+    for (ship, ship_team, _ship, ship_trans, ship_detection) in ships {
+        if !ship_team.is_this_client(*this_client) && *ship_detection == DetectionStatus::Never {
             continue;
         }
         if cursor_pos.0.distance(ship_trans.translation.truncate())

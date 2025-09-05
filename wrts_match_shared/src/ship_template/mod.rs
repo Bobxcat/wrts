@@ -150,18 +150,32 @@ macro_rules! make_ship_template_ids {
         }
     };
 
+    (count;) => (0usize);
+    (count; $x:tt $($xs:tt)* ) => (1usize + make_ship_template_ids!(count; $($xs)*));
+
+    (make_all_ships; $($ship_names:ident)*) => {
+        pub const fn all_ships() -> &'static [ShipTemplateId; const { make_ship_template_ids!(count; $($ship_names)*) }] {
+            const {&[$(
+                Self::$ship_names()
+            ),*]}
+        }
+    };
+
     ($($ship_names:ident)*) => {
         impl ShipTemplateId {
             make_ship_template_ids!(make_ids; $($ship_names)*);
             make_ship_template_ids!(make_name2id; $($ship_names)*);
             make_ship_template_ids!(make_id2name; $($ship_names)*);
             make_ship_template_ids!(make_id2template; $($ship_names)*);
+            make_ship_template_ids!(make_all_ships; $($ship_names)*);
         }
     };
 }
 
 make_ship_template_ids! {
     bismarck
+
+    hipper
 
     kiev
 
