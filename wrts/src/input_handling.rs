@@ -451,9 +451,10 @@ fn update_map_zoom(mut mouse_scroll: EventReader<MouseWheel>, mut zoom: ResMut<M
     let scroll_speed = 0.2;
     for scroll in mouse_scroll.read() {
         // We want it so that scrolling by 10 once is equivalent to scrolling
-        // by 1 ten times
+        // by 1 ten times. Keep in mind that the change in zoom is based on the
+        // current zoom
         // If we were to apply a large scroll all at once,
-        // the zoom "velocity" would be based entirely on the starting zoom value.
+        // the zoom "speed" would be based entirely on the starting zoom value.
         // So, scrolling by 10 once would scroll much too far
         //
         // One way to approximate this is by doing the following `N` times:
@@ -472,7 +473,7 @@ fn update_map_zoom(mut mouse_scroll: EventReader<MouseWheel>, mut zoom: ResMut<M
         // z = z(0) / e^a
         //
         // This isn't really necessary
-        zoom.0 = zoom.0 * f32::exp(-(scroll_speed * scroll.y));
+        zoom.0 = zoom.0 * f32::exp(-scroll.y * scroll_speed);
     }
     zoom.0 = zoom.0.clamp(0.5, 50.);
 }
