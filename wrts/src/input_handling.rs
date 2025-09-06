@@ -449,11 +449,30 @@ fn update_cursor_world_pos(
 
 fn update_map_zoom(mut mouse_scroll: EventReader<MouseWheel>, mut zoom: ResMut<MapZoom>) {
     let scroll_speed = 0.2;
-    let scroll_parts = 4;
     for scroll in mouse_scroll.read() {
-        for _ in 0..scroll_parts {
-            zoom.0 -= scroll_speed * scroll.y * zoom.0 * (1. / scroll_parts as f32);
-        }
+        // We want it so that scrolling by 10 once is equivalent to scrolling
+        // by 1 ten times
+        // If we were to apply a large scroll all at once,
+        // the zoom "velocity" would be based entirely on the starting zoom value.
+        // So, scrolling by 10 once would scroll much too far
+        //
+        // One way to approximate this is by doing the following `N` times:
+        // zoom = zoom - zoom * scroll_speed * scroll.y * (1 / N)
+        //
+        // Let's define `a = scroll_speed * scroll.y` and `z(i) = zoom at step i`
+        // and rewrite this as the following:
+        // z(i+1) = z(i) - z(i) * a / N
+        // z(i+1) = (1 - a / N) * z(i)
+        // z(i+1) = (1 - a / N)^i * z(0)
+        // Our final approximation will be at:
+        // z(N) = (1 - a / N)^N * z(0)
+        // And we want our appoximation to be perfectly accurate,
+        // so let N go to infinity:
+        // z = (1 - a / inf)^inf * z(0)
+        // z = z(0) / e^a
+        //
+        // This isn't really necessary
+        zoom.0 = zoom.0 * f32::exp(-(scroll_speed * scroll.y));
     }
     zoom.0 = zoom.0.clamp(0.5, 50.);
 }
