@@ -11,6 +11,9 @@ use crate::{
     networking::ThisClient,
 };
 
+const CONSUMABLE_CHARGING_COLOR: Color = Color::linear_rgb(0.6, 0.1, 0.1);
+const CONSUMABLE_READY_COLOR: Color = Color::linear_rgb(0.1, 0.4, 0.8);
+
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ShipDisplaySystem;
 #[derive(Debug, Clone, Copy)]
@@ -38,6 +41,7 @@ impl Plugin for ShipDisplayPlugin {
                 update_ship_ui_position,
                 update_ship_sprites,
                 update_detection_indicator_display,
+                update_shaded_progress_bars.after(sort_ship_modifiers_display),
             )
                 .in_set(ShipDisplaySystem),
         );
@@ -106,6 +110,78 @@ struct SmokeConsumableDisplay;
 #[require(Node, ImageNode)]
 pub struct DetectionIndicatorDisplay;
 
+fn make_shaded_progress_bar(
+    mut commands: Commands,
+    parent: Option<Entity>,
+    node: Node,
+    loaded_image: ImageNode,
+    top_image: ImageNode,
+    base_image: ImageNode,
+) -> Entity {
+    let bar = commands
+        .spawn((
+            node,
+            ShadedProgressBar {
+                progress: 0.,
+                loaded_image,
+                top_image,
+                base_image,
+            },
+            ImageNode::default(),
+            children![(
+                Node {
+                    width: Val::Percent(100.),
+                    height: Val::Percent(100.),
+                    ..default()
+                },
+                ImageNode::default()
+            )],
+        ))
+        .id();
+    if let Some(parent) = parent {
+        commands.entity(parent).add_child(bar);
+    }
+    bar
+}
+
+#[derive(Component, Debug)]
+#[require(Node, ImageNode)]
+struct ShadedProgressBar {
+    /// From 0 to 1
+    progress: f32,
+    /// Displayed only at progress >= 1
+    loaded_image: ImageNode,
+    /// More of this image is shown with a higher progress,
+    /// up to 100% near a progress of 1
+    top_image: ImageNode,
+    /// More of this image is shown with a lower progress,
+    /// up to 100% at a progress of 0
+    base_image: ImageNode,
+}
+
+fn update_shaded_progress_bars(
+    bars: Query<(Entity, &ShadedProgressBar, &Children)>,
+    mut nodes: Query<(&mut Node, &mut ImageNode)>,
+) {
+    for (bar_entity, bar, bar_children) in bars {
+        let [(mut _bot_node, mut bot_img), (mut top_node, mut top_img)] =
+            nodes.get_many_mut([bar_entity, bar_children[0]]).unwrap();
+
+        match bar.progress >= 1. {
+            true => {
+                top_node.height = Val::Percent(100.);
+                *top_img = bar.loaded_image.clone();
+                *bot_img = ImageNode::default();
+            }
+            false => {
+                top_node.height = Val::Percent((100. * bar.progress).clamp(0., 100.));
+                *top_img = bar.top_image.clone();
+                *bot_img = bar.base_image.clone();
+            }
+        }
+    }
+}
+
 fn update_torpedo_reload_display(
     mut commands: Commands,
     ships: Query<(Entity, &Ship)>,
@@ -116,18 +192,15 @@ fn update_torpedo_reload_display(
         Option<&Children>,
     )>,
     mut torpedo_reload_displays: Query<(&TorpedoReloadDisplay, &Children)>,
-    mut torpedo_reload_display_torpedo_statuses: Query<(
-        &TorpedoReloadDisplayTorpedoStatus,
-        &mut ImageNode,
+    mut torpedo_reload_display_torpedo_statuses: Query<
         &Children,
-    )>,
-    mut torpedo_reload_display_torpedo_statuses_layer1: Query<
-        (&mut Node, &mut ImageNode),
-        Without<TorpedoReloadDisplayTorpedoStatus>,
+        With<TorpedoReloadDisplayTorpedoStatus>,
     >,
+    mut progress_bars: Query<&mut ShadedProgressBar>,
 ) {
     let total_sprite_size = vec2(6., 20.);
 
+    let bar_grey_color = Color::linear_rgb(0.1, 0.1, 0.1);
     for (ship_entity, ship) in ships {
         let Some((disp_entity, _, _, disp_children)) = ship_modifiers_displays
             .iter()
@@ -146,7 +219,7 @@ fn update_torpedo_reload_display(
                     .id();
                 let c = (0..torps.volleys)
                     .map(|_| {
-                        commands
+                        let torp_status_disp = commands
                             .spawn((
                                 ShipUITrackedShip(ship_entity),
                                 Node {
@@ -156,18 +229,22 @@ fn update_torpedo_reload_display(
                                     ..default()
                                 },
                                 TorpedoReloadDisplayTorpedoStatus,
-                                ImageNode::default(),
-                                children![(
-                                    ShipUITrackedShip(ship_entity),
-                                    Node {
-                                        width: Val::Percent(100.),
-                                        height: Val::Percent(100.),
-                                        ..default()
-                                    },
-                                    ImageNode::default(),
-                                )],
                             ))
-                            .id()
+                            .id();
+                        make_shaded_progress_bar(
+                            commands.reborrow(),
+                            Some(torp_status_disp),
+                            Node {
+                                width: Val::Percent(100.),
+                                height: Val::Percent(100.),
+                                ..default()
+                            },
+                            ImageNode::solid_color(CONSUMABLE_READY_COLOR),
+                            ImageNode::solid_color(bar_grey_color),
+                            ImageNode::solid_color(CONSUMABLE_CHARGING_COLOR),
+                        );
+
+                        torp_status_disp
                     })
                     .collect_vec();
                 commands.entity(disp_entity).add_child(id);
@@ -183,44 +260,30 @@ fn update_torpedo_reload_display(
             .expect("unreachable");
 
         for i in 0..torpedo_reload_display_children.len() {
-            let (_, mut torp_status_bottom_layer, torp_status_children) =
-                torpedo_reload_display_torpedo_statuses
-                    .get_mut(torpedo_reload_display_children[i])
-                    .expect("unreachable");
+            let torp_status_children = torpedo_reload_display_torpedo_statuses
+                .get_mut(torpedo_reload_display_children[i])
+                .expect("unreachable");
 
-            let (mut torp_status_top_layer_node, mut torp_status_top_layer) =
-                torpedo_reload_display_torpedo_statuses_layer1
-                    .get_mut(
-                        torp_status_children
-                            .iter()
-                            .find(|&e| torpedo_reload_display_torpedo_statuses_layer1.contains(e))
-                            .expect("unreachable"),
-                    )
-                    .expect("unreachable");
+            let mut progress_bar = progress_bars
+                .get_mut(
+                    torp_status_children
+                        .iter()
+                        .find(|&e| progress_bars.contains(e))
+                        .expect("unreachable"),
+                )
+                .expect("unreachable");
 
             let is_reloaded = ship.reloaded_torp_volleys > i;
-            let bar_loading = Color::linear_rgb(0.6, 0.1, 0.1);
-            let bar_grey = Color::linear_rgb(0.1, 0.1, 0.1);
-            let bar_loaded = Color::linear_rgb(0.1, 0.4, 0.8);
             match is_reloaded {
                 true => {
-                    *torp_status_bottom_layer =
-                        ImageNode::solid_color(bar_loaded).with_mode(NodeImageMode::Stretch);
-                    *torp_status_top_layer = ImageNode::default();
-                    torp_status_top_layer.rect = None;
+                    progress_bar.progress = 2.;
                 }
                 false => {
-                    *torp_status_bottom_layer =
-                        ImageNode::solid_color(bar_loading).with_mode(NodeImageMode::Stretch);
                     let cutoff_lerp = ship.reloading_torp_volleys_remaining_time
                         [i - ship.reloaded_torp_volleys]
                         .as_secs_f32()
                         / torpedoes.reload.as_secs_f32();
-                    *torp_status_top_layer =
-                        ImageNode::solid_color(bar_grey).with_mode(NodeImageMode::Stretch);
-                    torp_status_top_layer_node.height =
-                        Val::Percent((100. * cutoff_lerp).clamp(0., 100.));
-                    // torp_status_top_layer_node.width = Val::Px(total_sprite_size.x);
+                    progress_bar.progress = cutoff_lerp;
                 }
             }
         }
@@ -237,8 +300,8 @@ fn update_smoke_consumable_display(
         Option<&Children>,
     )>,
     mut smoke_consumable_displays: Query<(&SmokeConsumableDisplay, &Children)>,
-    mut text_query: Query<(&mut Text)>,
-    mut image_node_query: Query<(&mut ImageNode)>,
+    mut text_query: Query<&mut Text>,
+    mut progress_bars: Query<&mut ShadedProgressBar>,
 ) {
     let total_sprite_size = vec2(15., 20.);
 
@@ -257,14 +320,25 @@ fn update_smoke_consumable_display(
                 .iter()
                 .find(|e| smoke_consumable_displays.contains(*e))
         }) else {
+            let smoke_icon_id = make_shaded_progress_bar(
+                commands.reborrow(),
+                None,
+                Node {
+                    width: Val::Px(total_sprite_size.x),
+                    height: Val::Px(total_sprite_size.y),
+                    margin: UiRect::all(Val::Px(3.)),
+                    ..default()
+                },
+                ImageNode::default(),
+                ImageNode::default(),
+                ImageNode::default(),
+            );
+
             let id = commands
                 .spawn((
                     ShipUITrackedShip(ship_entity),
                     SmokeConsumableDisplay,
-                    Node {
-                        //
-                        ..default()
-                    },
+                    Node { ..default() },
                     children![
                         // Charge count
                         (
@@ -277,21 +351,13 @@ fn update_smoke_consumable_display(
                             },
                             Text("".into())
                         ),
-                        // Smoke icon
-                        (
-                            ShipUITrackedShip(ship_entity),
-                            Node {
-                                width: Val::Px(total_sprite_size.x),
-                                height: Val::Px(total_sprite_size.y),
-                                margin: UiRect::all(Val::Px(3.)),
-                                ..default()
-                            },
-                            ImageNode::default()
-                        )
+                        // Smoke icon (added outside of this scope)
+                        // ...
                     ],
                 ))
                 .id();
             commands.entity(disp_entity).add_child(id);
+            commands.entity(id).add_child(smoke_icon_id);
             continue;
         };
 
@@ -304,7 +370,7 @@ fn update_smoke_consumable_display(
             .get_mut(smoke_consumable_display_children[0])
             .unwrap();
 
-        let mut smoke_icon = image_node_query
+        let mut smoke_icon = progress_bars
             .get_mut(smoke_consumable_display_children[1])
             .unwrap();
 
@@ -312,22 +378,33 @@ fn update_smoke_consumable_display(
             .charges_unused
             .map_or("".into(), |n| format!("{}", n));
 
-        let charged_color = Color::linear_rgb(1., 1., 1.);
+        // v The bar starts fully in colored by this color:
+        let charging_top_img = ImageNode::solid_color(Color::linear_rgb(0., 0., 0.));
+        let charging_base_img = ImageNode::solid_color(CONSUMABLE_CHARGING_COLOR);
+        let charged_img = ImageNode::solid_color(CONSUMABLE_READY_COLOR);
+        let deploying_top_img = ImageNode::solid_color(Color::linear_rgb(0.3, 0.7, 0.7));
+        let deploying_base_img = ImageNode::solid_color(Color::linear_rgb(0.3, 0.3, 0.3));
+        // ^ And ends up fully colored by this color, before
+        // instantly returning to the top
 
-        *smoke_icon = match smoke_state.action_state {
+        match smoke_state.action_state {
             SmokeConsumableActionState::Deploying { time_remaining } => {
-                ImageNode::solid_color(Color::linear_rgb(0.3, 0.7, 0.7).mix(
-                    &Color::linear_rgb(0.7, 0.7, 0.3),
-                    time_remaining.as_secs_f32() / smoke.action_time.as_secs_f32(),
-                ))
+                smoke_icon.progress =
+                    time_remaining.as_secs_f32() / smoke.action_time.as_secs_f32();
+                smoke_icon.top_image = deploying_top_img;
+                smoke_icon.loaded_image = smoke_icon.top_image.clone();
+                smoke_icon.base_image = deploying_base_img;
             }
             SmokeConsumableActionState::Recharging { time_remaining } => {
-                ImageNode::solid_color(charged_color.mix(
-                    &Color::linear_rgb(0., 0., 0.),
-                    time_remaining.as_secs_f32() / smoke.cooldown.as_secs_f32(),
-                ))
+                smoke_icon.progress = time_remaining.as_secs_f32() / smoke.cooldown.as_secs_f32();
+                smoke_icon.top_image = charging_top_img;
+                smoke_icon.loaded_image = smoke_icon.top_image.clone();
+                smoke_icon.base_image = charging_base_img;
             }
-            SmokeConsumableActionState::Recharged => ImageNode::solid_color(charged_color),
+            SmokeConsumableActionState::Recharged => {
+                smoke_icon.progress = 2.;
+                smoke_icon.loaded_image = charged_img;
+            }
         }
     }
 }

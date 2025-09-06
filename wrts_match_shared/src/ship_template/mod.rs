@@ -79,7 +79,6 @@ pub struct ShipTemplate {
     /// Speed gained per second
     pub engine_acceleration: Speed,
     pub turning_rate: AngularSpeed,
-    // pub rudder_acceleration: f32,
     pub max_health: f64,
     pub detection: f32,
     pub detection_when_firing_through_smoke: f32,
@@ -440,7 +439,6 @@ pub struct Torpedoes {
 
 impl Torpedoes {
     pub fn starboard_firing_angle(&self) -> AngleRange {
-        // let f = ;
         let port = self.port_firing_angle;
         AngleRange::from_vectors(vec2(port.to.x, -port.to.y), vec2(port.from.x, -port.from.y))
     }

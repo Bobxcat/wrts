@@ -372,9 +372,6 @@ fn update_action_state(
         }
     }
 
-    // info!("LOWER={buttons_with_lower_priority:#?}");
-    // info!("HIGHER={buttons_with_higher_priority:#?}");
-
     let mut has_completed: EnumMap<ButtonInputs, bool> = EnumMap::default();
     loop {
         for button in ButtonInputs::iter() {
