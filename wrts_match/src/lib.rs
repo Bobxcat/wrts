@@ -455,28 +455,39 @@ fn fire_bullets(
 
         // Turn turret and make sure the turret's turned before firing
         {
+            // Directions here are all relative to ship-space
             let targ_dir =
                 Vec2::from_angle(bullet_azimuth - ship_trans.rotation.to_euler(EulerRot::ZYX).0);
             let curr_dir = Vec2::from_angle(turret_state.dir);
 
             let rotate_dir = match turret_instance.movement_angle {
                 Some(movement_angle) => {
-                    if !AngleRange::from_vectors(curr_dir, targ_dir)
+                    // Nudge the curr_dir so the turret doesn't get stuck at the edges of the movement angle
+                    let curr_dir_nudged_ccw = Vec2::from_angle(0.001).rotate(curr_dir);
+                    let curr_dir_nudged_cw = Vec2::from_angle(-0.001).rotate(curr_dir);
+                    if !AngleRange::from_vectors(curr_dir_nudged_ccw, targ_dir)
                         .overlaps(movement_angle.inverse())
                     {
+                        // If I can sweep from curr_dir to targ_dir without overlapping
+                        // the place I'm not allowed to move, sweep counter clockwise
                         1.
-                    } else if !AngleRange::from_vectors(targ_dir, curr_dir)
+                    } else if !AngleRange::from_vectors(targ_dir, curr_dir_nudged_cw)
                         .overlaps(movement_angle.inverse())
                     {
+                        // If I can sweep from curr_dir to targ_dir *clockwise*
+                        // without overlapping the place I'm not allowed to move,
+                        // turn clockwise
                         -1.
                     } else {
+                        // The only way that this statement can be reached is
+                        // if the target is outside our movement angle
                         let targ_dir_clamped = movement_angle.clamp_angle(targ_dir);
-                        if targ_dir.angle_to(targ_dir_clamped) >= 0. {
+                        if targ_dir_clamped.distance_squared(movement_angle.end_dir()) <= 0.001 {
                             // Snapped to the end angle of the `movement_angle`
-                            -1.
+                            1.
                         } else {
                             // Snapped to the start angle of the `movement_angle`
-                            1.
+                            -1.
                         }
                     }
                 }

@@ -317,6 +317,12 @@ impl AngleRange {
         }
     }
 
+    /// Returns `self` mirrored across the x axis
+    #[must_use]
+    pub fn reflect_x(self) -> Self {
+        Self::from_vectors(vec2(self.to.x, -self.to.y), vec2(self.from.x, -self.from.y))
+    }
+
     /// An angle range that sweeps counter clockwise
     /// from `from` to `to`
     pub fn from_angles(from: f32, to: f32) -> Self {
@@ -365,6 +371,72 @@ impl AngleRange {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use std::f32::consts::PI;
+
+    use glam::{Vec2, vec2};
+    use rand::{Rng, rng};
+
+    use crate::ship_template::AngleRange;
+
+    fn random_normalized_vector(rng: &mut impl Rng) -> Vec2 {
+        loop {
+            if let Some(res) = vec2(rng.random(), rng.random()).try_normalize() {
+                return res;
+            }
+        }
+    }
+
+    fn vec2_eq(a: Vec2, b: Vec2) -> bool {
+        a.distance_squared(b) <= 0.001
+    }
+
+    #[test]
+    fn test_angle_to() {
+        let v = Vec2::from_angle(0.78);
+        assert!(v.angle_to(Vec2::from_angle(3.1187)) > 0.);
+        assert!(v.angle_to(Vec2::from_angle(3.1674)) > 0.);
+        assert!(v.angle_to(Vec2::from_angle(PI - 0.001).rotate(v)) > 0.);
+        assert!(v.angle_to(Vec2::from_angle(PI + 0.001).rotate(v)) < 0.);
+
+        let mut rng = rng();
+        for _ in 0..1_000 {
+            let v = random_normalized_vector(&mut rng);
+            assert!(v.angle_to(Vec2::from_angle(0.001).rotate(v)) > 0.);
+            assert!(v.angle_to(Vec2::from_angle(PI - 0.001).rotate(v)) > 0.);
+            assert!(v.angle_to(Vec2::from_angle(-0.001).rotate(v)) < 0.);
+            assert!(v.angle_to(Vec2::from_angle(PI + 0.001).rotate(v)) < 0.);
+        }
+    }
+
+    #[test]
+    fn test_clamp_angle() {
+        let range = AngleRange::from_angles(0.79, 2.3);
+        assert!(vec2_eq(
+            range.clamp_angle(range.start_dir()),
+            range.start_dir()
+        ));
+        assert!(vec2_eq(range.clamp_angle(range.end_dir()), range.end_dir()));
+        assert!(vec2_eq(
+            range.clamp_angle(Vec2::from_angle(0.78)),
+            range.start_dir()
+        ));
+        assert!(vec2_eq(
+            range.clamp_angle(Vec2::from_angle(2.4)),
+            range.end_dir()
+        ));
+        assert!(vec2_eq(
+            range.clamp_angle(Vec2::from_angle(5.45)),
+            range.start_dir()
+        ));
+        assert!(vec2_eq(
+            range.clamp_angle(Vec2::from_angle(3.9)),
+            range.end_dir()
+        ));
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Dispersion {
     /// Vertical radius of the dispersion elliptic cone.
@@ -378,6 +450,15 @@ pub struct Dispersion {
 
 slotmap::new_key_type! {
     pub struct TurretTemplateId;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TargetingMode {
+    /// Only fire at the fire target
+    Primary,
+    /// Fire at the fire target if possible, otherwise fire
+    /// at the closest possible ship
+    Secondary,
 }
 
 #[derive(Debug, Clone)]
@@ -395,9 +476,10 @@ pub struct TurretTemplate {
     pub barrel_count: u8,
     /// The distance between adjacent barrels on the turret
     pub barrel_spacing: f32,
+    pub targeting_mode: TargetingMode,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TurretInstance {
     pub ship_template: ShipTemplateId,
     pub template: TurretTemplateId,
@@ -411,6 +493,28 @@ pub struct TurretInstance {
 }
 
 impl TurretInstance {
+    /// Returns this turret reflected across the x axis
+    #[must_use]
+    fn mirrored(&self) -> Self {
+        use HullLocationAxis::*;
+        Self {
+            ship_template: self.ship_template,
+            template: self.template,
+            location_on_ship: HullLocation {
+                l: self.location_on_ship.l,
+                w: match self.location_on_ship.w {
+                    Centered => Centered,
+                    FromCenter(c) => FromCenter(-c),
+                    FromMin(c) => FromMax(c),
+                    FromMax(c) => FromMin(c),
+                },
+            },
+            movement_angle: self.movement_angle.map(AngleRange::reflect_x),
+            firing_angle: self.firing_angle.map(AngleRange::reflect_x),
+            default_dir: Vec2::to_angle(-Vec2::from_angle(self.default_dir)),
+        }
+    }
+
     pub fn turret_template(&self) -> &'static TurretTemplate {
         &self.ship_template.to_template().turret_templates[self.template]
     }
@@ -439,8 +543,7 @@ pub struct Torpedoes {
 
 impl Torpedoes {
     pub fn starboard_firing_angle(&self) -> AngleRange {
-        let port = self.port_firing_angle;
-        AngleRange::from_vectors(vec2(port.to.x, -port.to.y), vec2(port.from.x, -port.from.y))
+        self.port_firing_angle.reflect_x()
     }
 }
 

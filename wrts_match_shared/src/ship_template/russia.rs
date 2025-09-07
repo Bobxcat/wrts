@@ -21,6 +21,7 @@ impl ShipTemplate {
             barrel_count: 2,
             // Estimated distance
             barrel_spacing: 1.,
+            targeting_mode: TargetingMode::Primary,
         });
         ShipTemplate {
             id: ship_template,

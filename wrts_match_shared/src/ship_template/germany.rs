@@ -1,10 +1,12 @@
-use std::f32::consts::PI;
+use std::f32::consts::{FRAC_PI_2, PI};
 
 use crate::ship_template::*;
 
 impl ShipTemplate {
     /// https://archive.org/details/yn509bogp193x
     pub(super) fn bismarck() -> ShipTemplate {
+        use HullLocationAxis::*;
+
         let ship_template = ShipTemplateId::bismarck();
         let mut turret_templates = SlotMap::default();
         let main_battery = turret_templates.insert(TurretTemplate {
@@ -21,7 +23,131 @@ impl ShipTemplate {
             barrel_count: 2,
             // Estimated distance
             barrel_spacing: 1.,
+            targeting_mode: TargetingMode::Primary,
         });
+        let secondary_battery_150mm = turret_templates.insert(TurretTemplate {
+            reload_secs: 7.5,
+            damage: 250.,
+            muzzle_vel: 875.,
+            max_range: 9_100.,
+            dispersion: Dispersion {
+                vertical: 20.,
+                horizontal: 30.,
+                sigma: 1.8,
+            },
+            turn_rate: AngularSpeed::from_halfturn(36.),
+            barrel_count: 2,
+            barrel_spacing: 1.8,
+            targeting_mode: TargetingMode::Secondary,
+        });
+        let secondary_battery_105mm = turret_templates.insert(TurretTemplate {
+            reload_secs: 3.4,
+            damage: 170.,
+            muzzle_vel: 900.,
+            max_range: 9_100.,
+            dispersion: Dispersion {
+                vertical: 20.,
+                horizontal: 30.,
+                sigma: 1.8,
+            },
+            turn_rate: AngularSpeed::from_halfturn(36.),
+            barrel_count: 2,
+            // Estimated distance
+            barrel_spacing: 0.896,
+            targeting_mode: TargetingMode::Secondary,
+        });
+
+        let secondary_battery_150mm_instances = [
+            TurretInstance {
+                ship_template,
+                template: secondary_battery_150mm,
+                location_on_ship: HullLocation {
+                    l: FromMax(98.6),
+                    w: FromCenter(13.45),
+                },
+                movement_angle: Some(AngleRange::from_angles_deg(8., 150.)),
+                firing_angle: None,
+                default_dir: FRAC_PI_2,
+            },
+            TurretInstance {
+                ship_template,
+                template: secondary_battery_150mm,
+                location_on_ship: HullLocation {
+                    l: FromMax(125.5),
+                    w: FromCenter(13.45),
+                },
+                movement_angle: Some(AngleRange::from_angles_deg(10., 165.)),
+                firing_angle: None,
+                default_dir: FRAC_PI_2,
+            },
+            TurretInstance {
+                ship_template,
+                template: secondary_battery_150mm,
+                location_on_ship: HullLocation {
+                    l: FromMax(159.56),
+                    w: FromCenter(13.45),
+                },
+                movement_angle: Some(AngleRange::from_angles_deg(17., 164.)),
+                firing_angle: None,
+                default_dir: FRAC_PI_2,
+            },
+        ]
+        .map(|instance| [instance.mirrored(), instance])
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+
+        let secondary_battery_105mm_instances = [
+            TurretInstance {
+                ship_template,
+                template: secondary_battery_105mm,
+                location_on_ship: HullLocation {
+                    l: FromMax(112.95),
+                    w: FromCenter(9.75),
+                },
+                movement_angle: Some(AngleRange::from_angles_deg(12., 164.)),
+                firing_angle: None,
+                default_dir: FRAC_PI_2,
+            },
+            TurretInstance {
+                ship_template,
+                template: secondary_battery_105mm,
+                location_on_ship: HullLocation {
+                    l: FromMax(128.19),
+                    w: FromCenter(11.65),
+                },
+                movement_angle: Some(AngleRange::from_angles_deg(9., 152.)),
+                firing_angle: None,
+                default_dir: FRAC_PI_2,
+            },
+            TurretInstance {
+                ship_template,
+                template: secondary_battery_105mm,
+                location_on_ship: HullLocation {
+                    l: FromMax(141.64),
+                    w: FromCenter(11.65),
+                },
+                movement_angle: Some(AngleRange::from_angles_deg(30., 136.)),
+                firing_angle: None,
+                default_dir: FRAC_PI_2,
+            },
+            TurretInstance {
+                ship_template,
+                template: secondary_battery_105mm,
+                location_on_ship: HullLocation {
+                    l: FromMax(157.77),
+                    w: FromCenter(11.65),
+                },
+                movement_angle: Some(AngleRange::from_angles_deg(54., 170.)),
+                firing_angle: None,
+                default_dir: FRAC_PI_2,
+            },
+        ]
+        .map(|instance| [instance.mirrored(), instance])
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+
         ShipTemplate {
             id: ship_template,
             ship_class: ShipClass::Battleship,
@@ -38,11 +164,12 @@ impl ShipTemplate {
             detection: 15_900.,
             detection_when_firing_through_smoke: 15_100.,
             turret_templates,
-            turret_instances: vec![
+            turret_instances: [
+                // Primary
                 TurretInstance {
                     ship_template,
                     template: main_battery,
-                    location_on_ship: HullLocation::new_l(HullLocationAxis::FromMin(46.15)),
+                    location_on_ship: HullLocation::new_l(FromMin(46.15)),
                     movement_angle: Some(AngleRange::from_angles_deg(34., -34.)),
                     firing_angle: None,
                     default_dir: PI,
@@ -50,7 +177,7 @@ impl ShipTemplate {
                 TurretInstance {
                     ship_template,
                     template: main_battery,
-                    location_on_ship: HullLocation::new_l(HullLocationAxis::FromMin(64.35)),
+                    location_on_ship: HullLocation::new_l(FromMin(64.35)),
                     movement_angle: Some(AngleRange::from_angles_deg(34., -34.)),
                     firing_angle: None,
                     default_dir: PI,
@@ -58,7 +185,7 @@ impl ShipTemplate {
                 TurretInstance {
                     ship_template,
                     template: main_battery,
-                    location_on_ship: HullLocation::new_l(HullLocationAxis::FromMin(174.35)),
+                    location_on_ship: HullLocation::new_l(FromMin(174.35)),
                     movement_angle: Some(AngleRange::from_angles_deg(-138., 138.)),
                     firing_angle: None,
                     default_dir: 0.,
@@ -66,12 +193,16 @@ impl ShipTemplate {
                 TurretInstance {
                     ship_template,
                     template: main_battery,
-                    location_on_ship: HullLocation::new_l(HullLocationAxis::FromMin(192.55)),
+                    location_on_ship: HullLocation::new_l(FromMin(192.55)),
                     movement_angle: Some(AngleRange::from_angles_deg(-138., 138.)),
                     firing_angle: None,
                     default_dir: 0.,
                 },
-            ],
+            ]
+            .into_iter()
+            .chain(secondary_battery_150mm_instances)
+            .chain(secondary_battery_105mm_instances)
+            .collect(),
             torpedoes: None,
             consumables: Consumables::new(),
         }
@@ -95,6 +226,7 @@ impl ShipTemplate {
             turn_rate: AngularSpeed::from_halfturn(36.),
             barrel_count: 2,
             barrel_spacing: 3.,
+            targeting_mode: TargetingMode::Primary,
         });
         ShipTemplate {
             id: ship_template,

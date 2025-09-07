@@ -20,6 +20,7 @@ impl ShipTemplate {
             turn_rate: AngularSpeed::from_halfturn(47.4),
             barrel_count: 2,
             barrel_spacing: 3.,
+            targeting_mode: TargetingMode::Primary,
         });
         ShipTemplate {
             id: ship_template,

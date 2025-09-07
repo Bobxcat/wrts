@@ -1,6 +1,6 @@
 use std::f32::consts::PI;
 
-use crate::ship_template::{consumables::Smoke, *};
+use crate::ship_template::*;
 
 impl ShipTemplate {
     /// https://en.wikipedia.org/wiki/HSwMS_%C3%96land_(J16)
@@ -21,6 +21,7 @@ impl ShipTemplate {
             barrel_count: 2,
             // Estimated distance
             barrel_spacing: 1.,
+            targeting_mode: TargetingMode::Primary,
         });
         ShipTemplate {
             id: ship_template,
