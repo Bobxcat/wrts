@@ -2,13 +2,33 @@ use bevy::prelude::*;
 use rand_distr::Distribution;
 use wrts_match_shared::ship_template::{Dispersion, ShipTemplate};
 
-use crate::{Health, Team, Velocity};
+use crate::{Health, Team, Velocity, math_utils::BulletProblemRes};
+
+#[derive(Debug, Clone)]
+pub enum TurretAimInfo {
+    AimedAtTarget {
+        target: Entity,
+        bp: BulletProblemRes,
+    },
+    AimingToTarget {
+        target: Entity,
+        bp: BulletProblemRes,
+    },
+    NoValidTarget {},
+}
 
 #[derive(Debug, Clone)]
 pub struct TurretState {
     pub dir: f32,
     /// A `once` timer
     pub reload_timer: Timer,
+    pub absolute_pos: Vec2,
+    pub aim_info: TurretAimInfo,
+}
+
+#[derive(Component, Debug, Clone)]
+pub struct TurretStates {
+    pub states: Vec<TurretState>,
 }
 
 #[derive(Component, Debug, Clone)]
@@ -40,7 +60,6 @@ pub struct SmokePuff {
 #[require(Team, Health, Transform, Velocity)]
 pub struct Ship {
     pub template: &'static ShipTemplate,
-    pub turret_states: Vec<TurretState>,
     pub curr_speed: f32,
     /// A `once` timer
     pub torpedo_reloads: Vec<Timer>,

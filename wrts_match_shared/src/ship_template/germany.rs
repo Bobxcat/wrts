@@ -52,7 +52,6 @@ impl ShipTemplate {
             },
             turn_rate: AngularSpeed::from_halfturn(36.),
             barrel_count: 2,
-            // Estimated distance
             barrel_spacing: 0.896,
             targeting_mode: TargetingMode::Secondary,
         });

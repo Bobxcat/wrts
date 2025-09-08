@@ -12,7 +12,7 @@ use wrts_messaging::{
 
 use crate::detection::{BaseDetection, DetectionStatus};
 pub use crate::networking::shared_entity_tracking::SharedEntityTracking;
-use crate::ship::{Ship, SmokeConsumableState, SmokeDeploying};
+use crate::ship::{Ship, SmokeConsumableState, SmokeDeploying, TurretStates};
 use crate::{FireTarget, Health, MoveOrder, Team, Torpedo, Velocity};
 
 pub struct NetworkingPlugin;
@@ -608,13 +608,13 @@ fn send_velocity_updates(
 }
 
 fn send_turret_state_updates(
-    ships: Query<(Entity, &Ship)>,
+    ships: Query<(Entity, &TurretStates)>,
     clients: Query<&ClientInfo>,
     msgs_tx: Res<MessagesSend>,
     shared_entities: Res<SharedEntityTracking>,
 ) {
     let clients = clients.iter().map(|cl| cl.info.id).collect_vec();
-    for (local, ship) in ships {
+    for (local, turret_states) in ships {
         let Some(shared) = shared_entities.get_by_local(local) else {
             continue;
         };
@@ -623,8 +623,8 @@ fn send_turret_state_updates(
                 client: cl,
                 msg: Message::Match2Client(Match2Client::SetTurretDirs {
                     id: shared,
-                    turret_dirs: ship
-                        .turret_states
+                    turret_dirs: turret_states
+                        .states
                         .iter()
                         .map(|state| state.dir)
                         .collect_vec(),

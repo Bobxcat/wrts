@@ -12,7 +12,7 @@ use crate::{
     Bullet, Health, Team,
     detection::{BaseDetection, CanDetect, DetectionStatus},
     networking::{ClientInfo, MessagesSend, SharedEntityTracking},
-    ship::{Ship, SmokeConsumableState, SmokePuff, TurretState},
+    ship::{Ship, SmokeConsumableState, SmokePuff, TurretAimInfo, TurretState, TurretStates},
 };
 
 pub struct DespawnNetworkedEntityCommand {
@@ -57,17 +57,6 @@ impl Command for SpawnShipCommand {
                 .spawn((
                     Ship {
                         template,
-                        turret_states: template
-                            .turret_instances
-                            .iter()
-                            .map(|t| TurretState {
-                                dir: t.default_dir,
-                                reload_timer: Timer::from_seconds(
-                                    t.turret_template().reload_secs,
-                                    TimerMode::Once,
-                                ),
-                            })
-                            .collect_vec(),
                         curr_speed: 0.,
                         torpedo_reloads: template
                             .torpedoes
@@ -77,6 +66,21 @@ impl Command for SpawnShipCommand {
                                     .map(|_idx| Timer::new(torps.reload, TimerMode::Once))
                             })
                             .collect(),
+                    },
+                    TurretStates {
+                        states: template
+                            .turret_instances
+                            .iter()
+                            .map(|t| TurretState {
+                                dir: t.default_dir,
+                                reload_timer: Timer::from_seconds(
+                                    t.turret_template().reload_secs,
+                                    TimerMode::Once,
+                                ),
+                                absolute_pos: Vec2::ZERO,
+                                aim_info: TurretAimInfo::NoValidTarget {},
+                            })
+                            .collect_vec(),
                     },
                     BaseDetection(template.detection),
                     DetectionStatus {

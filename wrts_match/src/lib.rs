@@ -6,7 +6,8 @@ use std::{
 
 use bevy::{prelude::*, window::ExitCondition};
 use itertools::Itertools;
-use wrts_match_shared::ship_template::{AngleRange, Speed};
+use ordered_float::OrderedFloat;
+use wrts_match_shared::ship_template::{AngleRange, Speed, TargetingMode};
 use wrts_messaging::{ClientId, Match2Client, Message, WrtsMatchMessage};
 
 use crate::{
@@ -14,7 +15,10 @@ use crate::{
     initialize_game::initalize_game,
     math_utils::BulletProblemRes,
     networking::{ClientInfo, MessagesSend, NetworkingPlugin, SharedEntityTracking},
-    ship::{Ship, SmokeConsumableState, SmokeDeploying, SmokePuff, apply_dispersion},
+    ship::{
+        Ship, SmokeConsumableState, SmokeDeploying, SmokePuff, TurretAimInfo, TurretStates,
+        apply_dispersion,
+    },
     spawn_entity::{DespawnNetworkedEntityCommand, SpawnBulletCommand, SpawnSmokePuffCommand},
 };
 
@@ -352,170 +356,269 @@ fn collide_bullets(
     }
 }
 
-fn turret_reloading(ships: Query<&mut Ship>, time: Res<Time>) {
-    for mut ship in ships {
-        for turret in &mut ship.turret_states {
+fn turret_reloading(states: Query<&mut TurretStates>, time: Res<Time>) {
+    for mut turrets in states {
+        for turret in &mut turrets.states {
             turret.reload_timer.tick(time.delta());
         }
     }
 }
 
-fn fire_bullets(
-    mut commands: Commands,
+fn update_turret_absolute_pos(ships: Query<(&Ship, &mut TurretStates, &Transform)>) {
+    for (ship, mut turrets, ship_trans) in ships {
+        for (turret, turret_state) in
+            itertools::zip_eq(&ship.template.turret_instances, &mut turrets.states)
+        {
+            turret_state.absolute_pos =
+                turret.absolute_pos(ship_trans.translation.truncate(), ship_trans.rotation);
+        }
+    }
+}
+
+fn aim_turrets(
     ships: Query<(
         Entity,
         &Team,
-        &mut Ship,
+        &Ship,
         &Transform,
         &Velocity,
-        Option<&FireTarget>,
         &DetectionStatus,
+        Option<&FireTarget>,
     )>,
+    mut turret_states: Query<&mut TurretStates>,
     time: Res<Time>,
     rules: Res<GameRules>,
     teams: Query<&ClientInfo>,
 ) {
+    let rules = &*rules;
+
+    struct ShipQueryItem<'a> {
+        entity: Entity,
+        team: Team,
+        ship: &'a Ship,
+        trans: Transform,
+        vel: Velocity,
+        detection: &'a DetectionStatus,
+        fire_targ: Option<FireTarget>,
+    }
+
     let teams: [Team; 2] = teams
         .iter()
         .map(|cl| Team(cl.info.id))
         .collect_array()
         .unwrap();
-    let mut ships_by_team: TeamMap<_> = {
+    let ships_by_team: TeamMap<Vec<ShipQueryItem>> = {
         let (team0, team1) = ships
             .into_iter()
-            .partition::<Vec<_>, _>(|(_, team, ..)| **team == teams[0]);
+            .map(
+                |(entity, team, ship, trans, vel, detection, fire_targ)| ShipQueryItem {
+                    entity,
+                    team: *team,
+                    ship,
+                    trans: *trans,
+                    vel: *vel,
+                    detection,
+                    fire_targ: fire_targ.cloned(),
+                },
+            )
+            .partition::<Vec<_>, _>(|item| item.team == teams[0]);
         TeamMap::from_iter([(teams[0], team0), (teams[1], team1)])
     };
 
-    for (team, ship_idx, turret_idx) in teams
+    let turrets_iter = teams
         .into_iter()
-        .flat_map(|team| (0..ships_by_team[team].len()).map(move |idx| (team, idx)))
+        .flat_map(|team| (0..ships_by_team[team].len()).map(move |ship_idx| (team, ship_idx)))
         .flat_map(|(team, ship_idx)| {
             (0..ships_by_team[team][ship_idx]
-                .2
+                .ship
                 .template
                 .turret_instances
                 .len())
                 .map(move |turret_idx| (team, ship_idx, turret_idx))
-        })
-        .collect_vec()
-    {
-        let team_opposite = if teams[0] == team { teams[1] } else { teams[0] };
+        });
 
-        let (targ, targ_trans, targ_vel) = {
-            let targ = ships_by_team[team][ship_idx]
-                .5
+    for (team, ship_idx, turret_idx) in turrets_iter.collect_vec() {
+        let team_opposite = if teams[0] == team { teams[1] } else { teams[0] };
+        let ship_info = &ships_by_team[team][ship_idx];
+        let turret_state = &mut turret_states.get_mut(ship_info.entity).unwrap().states[turret_idx];
+        let turret_pos = turret_state.absolute_pos;
+        let turret_instance = &ship_info.ship.template.turret_instances[turret_idx];
+        let turret_template = turret_instance.turret_template();
+
+        let (targ_info, bp) = {
+            let do_bp_against_targ = move |fire_targ: &ShipQueryItem| -> Option<BulletProblemRes> {
+                if !fire_targ.detection.is_detected {
+                    return None;
+                }
+                math_utils::bullet_problem(
+                    turret_pos,
+                    fire_targ.trans.translation.truncate(),
+                    fire_targ.vel.0.truncate(),
+                    turret_template.muzzle_vel as f64,
+                    rules.gravity as f64,
+                )
+                .filter(|bp| bp.intersection_dist < turret_template.max_range)
+            };
+
+            let bp_is_within_firing_angle = |bp: &BulletProblemRes| -> bool {
+                turret_instance
+                    .firing_angle
+                    .or(turret_instance.movement_angle)
+                    .is_some_and(|valid_angle| {
+                        let targ_dir = Vec2::from_angle(
+                            bp.projectile_azimuth
+                                - ship_info.trans.rotation.to_euler(EulerRot::ZYX).0,
+                        );
+                        valid_angle.contains(targ_dir)
+                    })
+            };
+
+            let fire_targ = ships_by_team[team][ship_idx]
+                .fire_targ
+                .clone()
                 .and_then(|targ| {
                     ships_by_team[team_opposite]
                         .iter()
-                        .find(|(ship, _, _, _, _, _, _)| *ship == targ.ship)
+                        .find(|item| item.entity == targ.ship)
                 })
-                .filter(|(_, _, _, _, _, _, targ_detection)| targ_detection.is_detected);
+                .filter(|targ_info| targ_info.detection.is_detected);
 
-            let Some((targ, _, _, targ_trans, targ_vel, _, _)) = targ else {
-                continue;
-            };
-            (*targ, **targ_trans, **targ_vel)
-        };
+            let primary_targ = fire_targ
+                .and_then(|fire_targ| do_bp_against_targ(fire_targ).map(|bp| (fire_targ, bp)));
 
-        let (ship_entity, ship, ship_trans) = {
-            let x = &mut ships_by_team[team][ship_idx];
-            (x.0, &mut x.2, *x.3)
-        };
-        let turret_instance = &ship.template.turret_instances[turret_idx];
-        let turret_template = turret_instance.turret_template();
+            match (turret_template.targeting_mode, primary_targ) {
+                // FireTarget is within range
+                (TargetingMode::Primary, Some(primary_targ)) => primary_targ,
+                (TargetingMode::Primary, None) => {
+                    turret_state.aim_info = TurretAimInfo::NoValidTarget {};
+                    continue;
+                }
 
-        let turret_pos = turret_instance.location_on_ship.to_absolute(
-            &ship.template.hull,
-            ship_trans.translation.truncate(),
-            ship_trans.rotation,
-        );
-        let targ_pos = targ_trans.translation.truncate();
-
-        let turret_state = &mut ship.turret_states[turret_idx];
-
-        let Some(BulletProblemRes {
-            intersection_point,
-            intersection_time,
-            intersection_dist: _,
-            projectile_dir: bullet_dir,
-            projectile_azimuth: bullet_azimuth,
-            projectile_elevation: _,
-        }) = math_utils::bullet_problem(
-            turret_pos,
-            targ_pos,
-            targ_vel.0.truncate(),
-            turret_template.muzzle_vel as f64,
-            rules.gravity as f64,
-        )
-        .filter(|bp| bp.intersection_dist < turret_template.max_range)
-        else {
-            continue;
+                (TargetingMode::Secondary, primary_targ) => {
+                    let fallback_targs = ships_by_team[team_opposite]
+                        .iter()
+                        .sorted_by_key(|targ| {
+                            OrderedFloat(
+                                targ.trans
+                                    .translation
+                                    .distance_squared(ship_info.trans.translation),
+                            )
+                        })
+                        .filter_map(|potential_targ| {
+                            do_bp_against_targ(potential_targ).map(|bp| (potential_targ, bp))
+                        });
+                    if let Some(new_targ_found) = primary_targ
+                        .into_iter()
+                        .chain(fallback_targs)
+                        .filter(|(_, bp)| bp_is_within_firing_angle(bp))
+                        .next()
+                    {
+                        new_targ_found
+                    } else {
+                        turret_state.aim_info = TurretAimInfo::NoValidTarget {};
+                        continue;
+                    }
+                }
+            }
         };
 
         // Turn turret and make sure the turret's turned before firing
-        {
-            // Directions here are all relative to ship-space
-            let targ_dir =
-                Vec2::from_angle(bullet_azimuth - ship_trans.rotation.to_euler(EulerRot::ZYX).0);
-            let curr_dir = Vec2::from_angle(turret_state.dir);
 
-            let rotate_dir = match turret_instance.movement_angle {
-                Some(movement_angle) => {
-                    // Nudge the curr_dir so the turret doesn't get stuck at the edges of the movement angle
-                    let curr_dir_nudged_ccw = Vec2::from_angle(0.001).rotate(curr_dir);
-                    let curr_dir_nudged_cw = Vec2::from_angle(-0.001).rotate(curr_dir);
-                    if !AngleRange::from_vectors(curr_dir_nudged_ccw, targ_dir)
-                        .overlaps(movement_angle.inverse())
-                    {
-                        // If I can sweep from curr_dir to targ_dir without overlapping
-                        // the place I'm not allowed to move, sweep counter clockwise
+        // Directions here are all relative to ship-space
+        let targ_dir = Vec2::from_angle(
+            bp.projectile_azimuth - ship_info.trans.rotation.to_euler(EulerRot::ZYX).0,
+        );
+        let curr_dir = Vec2::from_angle(turret_state.dir);
+
+        let rotate_dir = match turret_instance.movement_angle {
+            Some(movement_angle) => {
+                // Nudge the curr_dir so the turret doesn't get stuck at the edges of the movement angle
+                let curr_dir_nudged_ccw = Vec2::from_angle(0.001).rotate(curr_dir);
+                let curr_dir_nudged_cw = Vec2::from_angle(-0.001).rotate(curr_dir);
+                if !AngleRange::from_vectors(curr_dir_nudged_ccw, targ_dir)
+                    .overlaps(movement_angle.inverse())
+                {
+                    // If I can sweep from curr_dir to targ_dir without overlapping
+                    // the place I'm not allowed to move, sweep counter clockwise
+                    1.
+                } else if !AngleRange::from_vectors(targ_dir, curr_dir_nudged_cw)
+                    .overlaps(movement_angle.inverse())
+                {
+                    // If I can sweep from curr_dir to targ_dir *clockwise*
+                    // without overlapping the place I'm not allowed to move,
+                    // turn clockwise
+                    -1.
+                } else {
+                    // The only way that this statement can be reached is
+                    // if the target is outside our movement angle
+                    let targ_dir_clamped = movement_angle.clamp_angle(targ_dir);
+                    if targ_dir_clamped.distance_squared(movement_angle.end_dir()) <= 0.001 {
+                        // Snapped to the end angle of the `movement_angle`
                         1.
-                    } else if !AngleRange::from_vectors(targ_dir, curr_dir_nudged_cw)
-                        .overlaps(movement_angle.inverse())
-                    {
-                        // If I can sweep from curr_dir to targ_dir *clockwise*
-                        // without overlapping the place I'm not allowed to move,
-                        // turn clockwise
-                        -1.
                     } else {
-                        // The only way that this statement can be reached is
-                        // if the target is outside our movement angle
-                        let targ_dir_clamped = movement_angle.clamp_angle(targ_dir);
-                        if targ_dir_clamped.distance_squared(movement_angle.end_dir()) <= 0.001 {
-                            // Snapped to the end angle of the `movement_angle`
-                            1.
-                        } else {
-                            // Snapped to the start angle of the `movement_angle`
-                            -1.
-                        }
+                        // Snapped to the start angle of the `movement_angle`
+                        -1.
                     }
                 }
-                None => curr_dir.angle_to(targ_dir).signum(),
-            };
-
-            let new_dir = {
-                let mut dir = curr_dir.rotate(Vec2::from_angle(
-                    rotate_dir * turret_template.turn_rate.radps() * time.delta_secs(),
-                ));
-                if let Some(movement_angle) = turret_instance.movement_angle {
-                    dir = movement_angle.clamp_angle(dir);
-                }
-                dir
-            };
-            turret_state.dir = new_dir.to_angle();
-
-            let turret_not_aimed = new_dir.angle_to(targ_dir).abs() > PI / 180.;
-            let turret_outside_firing_angle =
-                if let Some(firing_angle) = turret_instance.firing_angle {
-                    !firing_angle.contains(new_dir)
-                } else {
-                    false
-                };
-            if turret_not_aimed || turret_outside_firing_angle {
-                continue;
             }
-        }
+            None => curr_dir.angle_to(targ_dir).signum(),
+        };
+
+        let new_dir = {
+            let mut dir = curr_dir.rotate(Vec2::from_angle(
+                rotate_dir * turret_template.turn_rate.radps() * time.delta_secs(),
+            ));
+            if let Some(movement_angle) = turret_instance.movement_angle {
+                dir = movement_angle.clamp_angle(dir);
+            }
+            dir
+        };
+        turret_state.dir = new_dir.to_angle();
+
+        let turret_not_aimed = new_dir.angle_to(targ_dir).abs() > PI / 180.;
+        let turret_outside_firing_angle = if let Some(firing_angle) = turret_instance.firing_angle {
+            !firing_angle.contains(new_dir)
+        } else {
+            false
+        };
+        let turret_cant_fire_this_frame = turret_not_aimed || turret_outside_firing_angle;
+
+        turret_state.aim_info = match turret_cant_fire_this_frame {
+            true => TurretAimInfo::AimingToTarget {
+                target: targ_info.entity,
+                bp,
+            },
+            false => TurretAimInfo::AimedAtTarget {
+                target: targ_info.entity,
+                bp,
+            },
+        };
+    }
+}
+
+fn fire_bullets(
+    mut commands: Commands,
+    ships: Query<(Entity, &Team, &mut Ship, &mut TurretStates)>,
+) {
+    let mut ships = ships.into_iter().collect_vec();
+    for (ship_idx, turret_idx) in (0..ships.len())
+        .flat_map(|ship_idx| {
+            (0..ships[ship_idx].2.template.turret_instances.len())
+                .map(move |turret_idx| (ship_idx, turret_idx))
+        })
+        .collect_vec()
+    {
+        let (ship_entity, team, ship, turret_states) = &mut ships[ship_idx];
+        let (ship_entity, team) = (*ship_entity, *team);
+
+        let turret_instance = &ship.template.turret_instances[turret_idx];
+        let turret_template = turret_instance.turret_template();
+
+        let turret_state = &mut turret_states.states[turret_idx];
+
+        let TurretAimInfo::AimedAtTarget { target, bp } = &turret_state.aim_info else {
+            continue;
+        };
 
         if !turret_state.reload_timer.finished() {
             continue;
@@ -526,11 +629,11 @@ fn fire_bullets(
                 as f32
                 * turret_template.barrel_spacing;
 
-            let bullet_vel = apply_dispersion(&turret_template.dispersion, bullet_dir)
+            let bullet_vel = apply_dispersion(&turret_template.dispersion, bp.projectile_dir)
                 * turret_template.muzzle_vel as f32;
 
-            let bullet_start = turret_pos
-                + Vec2::from_angle(bullet_azimuth).rotate(vec2(0., barrel_lateral_offset));
+            let bullet_start = turret_state.absolute_pos
+                + Vec2::from_angle(bp.projectile_azimuth).rotate(vec2(0., barrel_lateral_offset));
             // The bullet should start very slightly above the water,
             // but not by very much since ships have a small draft so
             // it would mean a lot more missing
@@ -538,18 +641,18 @@ fn fire_bullets(
 
             let bullet = Bullet {
                 owning_ship: ship_entity,
-                targ_ship: targ,
+                targ_ship: *target,
                 inital_pos: bullet_start,
                 inital_vel: bullet_vel,
-                inital_aimpoint: intersection_point,
-                current_aimpoint: intersection_point,
-                expected_flight_time_total: Duration::from_secs_f32(intersection_time),
+                inital_aimpoint: bp.intersection_point,
+                current_aimpoint: bp.intersection_point,
+                expected_flight_time_total: Duration::from_secs_f32(bp.intersection_time),
                 current_flight_time: Duration::ZERO,
                 damage: turret_template.damage,
             };
 
             commands.queue(SpawnBulletCommand {
-                team,
+                team: *team,
                 bullet,
                 update_firing_detection_timer: Some(Duration::from_secs(20)),
                 update_firing_detection_range: Some(turret_template.max_range),
@@ -646,7 +749,12 @@ pub fn start_match() -> Result<()> {
                 collide_torpedoes.after(apply_velocity),
                 collide_bullets.after(move_bullets),
                 turret_reloading,
-                fire_bullets.after(turret_reloading).after(DetectionSystems),
+                update_turret_absolute_pos,
+                aim_turrets.after(update_turret_absolute_pos),
+                fire_bullets
+                    .after(turret_reloading)
+                    .after(aim_turrets)
+                    .after(DetectionSystems),
                 advance_smoke_cooldown,
                 deploy_smoke,
                 dissapate_smoke_puffs,
