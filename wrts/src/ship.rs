@@ -3,7 +3,7 @@ use std::{cell::Cell, time::Duration};
 use bevy::{prelude::*, window::PrimaryWindow};
 use itertools::{Itertools, iproduct};
 use ordered_float::OrderedFloat;
-use wrts_match_shared::ship_template::ShipTemplate;
+use wrts_match_shared::ship_template::{ShipTemplate, TargetingMode};
 use wrts_messaging::ClientId;
 
 use crate::{
@@ -576,12 +576,17 @@ fn update_ship_sprites(
         if is_visible && display_type == DisplayType::Accurate {
             let turrets = ship.template.turret_instances.as_slice();
             for turret_idx in 0..turrets.len() {
-                let &TurretState { dir: dir_relative } = &ship.turret_states[turret_idx];
-                let dir_absolute = trans.rotation.to_euler(EulerRot::ZXY).0 + dir_relative;
+                let target_mode = turrets[turret_idx].turret_template().targeting_mode;
+                let (color, length) = match target_mode {
+                    TargetingMode::Primary => (Color::linear_rgb(0.8, 0.8, 0.8), 30.),
+                    TargetingMode::Secondary => (Color::linear_rgb(0.8, 0.3, 0.3), 15.),
+                };
                 let pos =
                     turrets[turret_idx].absolute_pos(trans.translation.truncate(), trans.rotation);
-                let delta = Vec2::from_angle(dir_absolute) * 30.;
-                gizmos.arrow_2d(pos, pos + delta, Color::linear_rgb(0.8, 0.8, 0.8));
+                let &TurretState { dir: dir_relative } = &ship.turret_states[turret_idx];
+                let dir_absolute = trans.rotation.to_euler(EulerRot::ZXY).0 + dir_relative;
+                let delta = Vec2::from_angle(dir_absolute) * length;
+                gizmos.arrow_2d(pos, pos + delta, color);
             }
         }
 
