@@ -7,7 +7,10 @@ use std::{
 use bevy::{prelude::*, window::ExitCondition};
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
-use wrts_match_shared::ship_template::{AngleRange, Speed, TargetingMode};
+use wrts_match_shared::{
+    formulas::{ProjectileHitCalc, ProjectileHitRes},
+    ship_template::{AngleRange, BulletType, Caliber, Speed, TargetingMode},
+};
 use wrts_messaging::{ClientId, Match2Client, Message, WrtsMatchMessage};
 
 use crate::{
@@ -265,8 +268,11 @@ fn force_ship_in_map(ships: Query<&mut Transform, With<Ship>>) {
 struct Bullet {
     owning_ship: Entity,
     targ_ship: Entity,
+    caliber: Caliber,
+    ty: BulletType,
     inital_pos: Vec3,
     inital_vel: Vec3,
+    curr_vel: Vec3,
     inital_aimpoint: Vec2,
     current_aimpoint: Vec2,
     expected_flight_time_total: Duration,
@@ -301,11 +307,17 @@ fn move_bullets(
         ) + bullet.inital_vel * bullet.current_flight_time.as_secs_f32()
             + bullet.inital_pos
             + aimpoint_adjustment.extend(0.);
+        let new_vel = vec3(
+            0.,
+            0.,
+            -rules.gravity * bullet.current_flight_time.as_secs_f32(),
+        ) + bullet.inital_vel;
         bullet.current_flight_time += time.delta();
 
         if let Ok(dir) = Dir2::new((new_pos - trans.translation).truncate()) {
             trans.rotation = Quat::from_rotation_z(dir.to_angle());
         }
+        bullet.curr_vel = new_vel;
         trans.translation = new_pos;
 
         if trans.translation.z <= -100. {
@@ -328,20 +340,18 @@ fn collide_bullets(
                 continue;
             }
 
-            // Calculate collisions in the local space of the ship hull
-            let ship_rot_inv = ship_trans.rotation.normalize().inverse();
-            let (ship_hull_min, ship_hull_max) = ship.template.hull.to_bounds();
-            let bullet_pos = ship_rot_inv * (bullet_trans.translation - ship_trans.translation);
-            // FIXME?: we're assuming the bullet impacts when the bullet hits the water
-            // Maybe this is fine, because it'll always be approx. correct
-            let bullet_vel = ship_rot_inv * bullet.inital_vel.with_z(-bullet.inital_vel.z);
-            if Vec3::cmple(ship_hull_min, bullet_pos).all()
-                && Vec3::cmple(bullet_pos, ship_hull_max).all()
-            {
-                let bullet_alignment = bullet_vel.normalize().dot(Vec3::X).abs();
-                let damage = bullet.damage * (1.5 - bullet_alignment as f64);
+            let hit = ProjectileHitCalc {
+                ship: ship.template.id,
+                ship_pos: ship_trans.translation.truncate(),
+                ship_rot: ship_trans.rotation,
+                projectile_base_damage: bullet.damage,
+                projectile_caliber: bullet.caliber,
+                projectile_vel: bullet.curr_vel,
+                projectile_pos: bullet_trans.translation,
+            };
 
-                ship_health.0 -= damage;
+            if let ProjectileHitRes::Hit { damage_dealt } = hit.run() {
+                ship_health.0 -= damage_dealt;
 
                 commands.queue(DespawnNetworkedEntityCommand {
                     entity: bullet_entity,
@@ -642,8 +652,11 @@ fn fire_bullets(
             let bullet = Bullet {
                 owning_ship: ship_entity,
                 targ_ship: *target,
+                caliber: Caliber::from_mm(300.),
+                ty: BulletType::AP,
                 inital_pos: bullet_start,
                 inital_vel: bullet_vel,
+                curr_vel: bullet_vel,
                 inital_aimpoint: bp.intersection_point,
                 current_aimpoint: bp.intersection_point,
                 expected_flight_time_total: Duration::from_secs_f32(bp.intersection_time),

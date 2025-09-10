@@ -39,6 +39,24 @@ impl Speed {
     }
 }
 
+// Inner unit is millimeters
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct Caliber(f32);
+
+impl Caliber {
+    pub fn from_mm(mm: f32) -> Self {
+        Self(mm)
+    }
+
+    pub fn mm(self) -> f32 {
+        self.0
+    }
+
+    pub fn from_inch(inch: f32) -> Self {
+        Self::from_mm(inch * 25.4)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub struct AngularSpeed(f32);
 
@@ -191,6 +209,20 @@ impl ShipTemplate {
 
     pub fn from_id(id: ShipTemplateId) -> &'static Self {
         id.to_template()
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_all_ship_template_ids_correct() {
+    for &id in ShipTemplateId::all_ships() {
+        assert_eq!(ShipTemplateId::from_name(id.to_name()), Some(id));
+        assert_eq!(
+            id.to_template().id,
+            id,
+            "ShipTemplate has wrong ShipTemplateId: `{}`",
+            id.to_name()
+        );
     }
 }
 
@@ -461,6 +493,12 @@ pub enum TargetingMode {
     Secondary,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BulletType {
+    /// Armor piercing
+    AP,
+}
+
 #[derive(Debug, Clone)]
 pub struct TurretTemplate {
     pub reload_secs: f32,
@@ -548,7 +586,7 @@ impl Torpedoes {
 }
 
 pub mod consumables {
-    use std::{num::NonZeroUsize, time::Duration};
+    use std::time::Duration;
 
     use paste::paste;
 
