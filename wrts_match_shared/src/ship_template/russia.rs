@@ -17,12 +17,29 @@ impl ShipTemplate {
                 horizontal: 8.8,
                 sigma: 2.0,
             },
-            turn_rate: AngularSpeed::from_halfturn(18.),
+            turn_rate: AngularSpeed::from_halfturn(12.),
             barrel_count: 2,
             // Estimated distance
             barrel_spacing: 1.,
             targeting_mode: TargetingMode::Primary,
         });
+        let seccondary_battery_85mm = turret_templates.insert(TurretTemplate {
+            reload_secs: 4.,
+            damage: 130.,
+            muzzle_vel: 792.,
+            max_range: 5_000.,
+            dispersion: Dispersion {
+                vertical: 3.5,
+                horizontal: 15.,
+                sigma: 2.0,
+            },
+            turn_rate: AngularSpeed::from_halfturn(5.),
+            barrel_count: 2,
+            // Estimated distance
+            barrel_spacing: 1.,
+            targeting_mode: TargetingMode::Secondary,
+        });
+
         ShipTemplate {
             id: ship_template,
             ship_class: ShipClass::Destroyer,
@@ -41,12 +58,13 @@ impl ShipTemplate {
             detection_when_firing_through_smoke: 3_400.,
             turret_templates,
             turret_instances: vec![
+                // Main battery
                 TurretInstance {
                     ship_template,
                     template: main_battery,
                     // Estimated distance
                     location_on_ship: HullLocation::new_l(HullLocationAxis::FromCenter(-50.)),
-                    movement_angle: Some(AngleRange::from_angles_deg(25., -25.)),
+                    movement_angle: Some(AngleRange::from_angles_deg(33., -33.)),
                     firing_angle: None,
                     default_dir: PI,
                 },
@@ -55,7 +73,7 @@ impl ShipTemplate {
                     template: main_battery,
                     // Estimated distance
                     location_on_ship: HullLocation::new_l(HullLocationAxis::FromCenter(40.)),
-                    movement_angle: Some(AngleRange::from_angles_deg(-155., 155.)),
+                    movement_angle: Some(AngleRange::from_angles_deg(-150., 150.)),
                     firing_angle: None,
                     default_dir: 0.,
                 },
@@ -64,9 +82,19 @@ impl ShipTemplate {
                     template: main_battery,
                     // Estimated distance
                     location_on_ship: HullLocation::new_l(HullLocationAxis::FromCenter(50.)),
-                    movement_angle: Some(AngleRange::from_angles_deg(-155., 155.)),
+                    movement_angle: Some(AngleRange::from_angles_deg(-149., 149.)),
                     firing_angle: None,
                     default_dir: 0.,
+                },
+                // Secondary battery
+                TurretInstance {
+                    ship_template,
+                    template: seccondary_battery_85mm,
+                    // Estimated distance
+                    location_on_ship: HullLocation::new_l(HullLocationAxis::FromCenter(-40.)),
+                    movement_angle: Some(AngleRange::from_angles_deg(30., -30.)),
+                    firing_angle: None,
+                    default_dir: PI,
                 },
             ],
             torpedoes: Some(Torpedoes {

@@ -444,7 +444,6 @@ pub fn run() {
         //
         .add_systems(Startup, write_settings_to_file)
         .add_systems(Startup, make_camera)
-        // .add_systems(PreUpdate, ())
         .add_systems(
             Update,
             (

@@ -549,7 +549,10 @@ impl TurretInstance {
             },
             movement_angle: self.movement_angle.map(AngleRange::reflect_x),
             firing_angle: self.firing_angle.map(AngleRange::reflect_x),
-            default_dir: Vec2::to_angle(-Vec2::from_angle(self.default_dir)),
+            default_dir: Vec2::to_angle({
+                let v = Vec2::from_angle(self.default_dir);
+                vec2(v.x, -v.y)
+            }),
         }
     }
 
