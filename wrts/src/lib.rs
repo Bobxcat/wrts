@@ -414,6 +414,7 @@ fn draw_background(
 }
 
 fn write_settings_to_file(settings: Res<PlayerSettings>) {
+    std::fs::create_dir_all("player_settings").unwrap();
     std::fs::write(
         "player_settings/settings.json",
         serde_json::to_string_pretty(&*settings).unwrap(),
