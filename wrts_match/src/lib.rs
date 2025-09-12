@@ -14,10 +14,13 @@ use wrts_match_shared::{
 use wrts_messaging::{ClientId, Match2Client, Message, WrtsMatchMessage};
 
 use crate::{
-    detection::{DetectionPlugin, DetectionStatus, DetectionSystems},
+    detection::{DetectionPlugin, DetectionStatus, DetectionSystem},
     initialize_game::initalize_game,
     math_utils::BulletProblemRes,
-    networking::{ClientInfo, MessagesSend, NetworkingPlugin, SharedEntityTracking},
+    networking::{
+        ClientInfo, MessagesSend, NetworkingPlugin, ReadClientMessagesSystem, SharedEntityTracking,
+        UpdateClientsSystem,
+    },
     ship::{
         Ship, SmokeConsumableState, SmokeDeploying, SmokePuff, TurretAimInfo, TurretStates,
         apply_dispersion,
@@ -31,6 +34,10 @@ mod math_utils;
 mod networking;
 mod ship;
 mod spawn_entity;
+
+/// A factor applied to all mobility and final damage dealt
+/// (does NOT affect reload speed)
+pub const GAME_SCALE: f64 = 0.5;
 
 #[derive(Resource)]
 struct GameRules {
@@ -158,7 +165,7 @@ fn collide_torpedoes(
                 && Vec2::cmple(torp_pos, ship_hull_max.truncate()).all()
             {
                 let damage = torp.damage;
-                ship_health.0 -= damage;
+                ship_health.0 -= damage * GAME_SCALE;
                 commands.queue(DespawnNetworkedEntityCommand {
                     entity: torp_entity,
                 });
@@ -230,7 +237,10 @@ fn update_ship_velocity(
                 f32::clamp(ship.0.curr_speed / Speed::from_kts(20.).mps(), 0., 1.);
             let new_dir = Vec2::from_angle(curr_dir).rotate_towards(
                 Vec2::from_angle(targ_dir),
-                turn_rate_limiter * ship.0.template.turning_rate.radps() * time.delta_secs(),
+                turn_rate_limiter
+                    * ship.0.template.turning_rate.radps()
+                    * time.delta_secs()
+                    * GAME_SCALE as f32,
             );
 
             let speed_delta = targ_speed - ship.0.curr_speed;
@@ -247,7 +257,7 @@ fn update_ship_velocity(
         };
 
         ship.1.rotation = Quat::from_rotation_z(new_dir.to_angle());
-        ship.2.0 = new_vel.extend(0.);
+        ship.2.0 = new_vel.extend(0.) * GAME_SCALE as f32;
     }
 }
 
@@ -351,7 +361,7 @@ fn collide_bullets(
             };
 
             if let ProjectileHitRes::Hit { damage_dealt } = hit.run() {
-                ship_health.0 -= damage_dealt;
+                ship_health.0 -= damage_dealt * GAME_SCALE;
 
                 commands.queue(DespawnNetworkedEntityCommand {
                     entity: bullet_entity,
@@ -729,6 +739,9 @@ fn apply_velocity(q: Query<(&mut Transform, &Velocity)>, time: Res<Time>) {
     }
 }
 
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+struct MoveEntitiesSystem;
+
 pub fn start_match() -> Result<()> {
     let exit = App::new()
         .init_resource::<GameRules>()
@@ -745,33 +758,41 @@ pub fn start_match() -> Result<()> {
         .add_plugins(DetectionPlugin)
         .add_systems(Startup, initalize_game)
         .configure_sets(
-            Update,
-            DetectionSystems
-                .after(apply_velocity)
-                .after(collide_bullets),
+            FixedUpdate,
+            MoveEntitiesSystem
+                .after(ReadClientMessagesSystem)
+                .before(UpdateClientsSystem),
         )
         .add_systems(
-            Update,
+            FixedUpdate,
             (
                 update_ship_velocity,
                 apply_velocity.after(update_ship_velocity),
                 force_ship_in_map.after(apply_velocity),
                 move_bullets,
-                torpedo_reloading,
                 despawn_old_torpedoes.after(apply_velocity),
-                collide_torpedoes.after(apply_velocity),
-                collide_bullets.after(move_bullets),
+            )
+                .in_set(MoveEntitiesSystem),
+        )
+        .add_systems(
+            FixedUpdate,
+            (
+                collide_torpedoes.after(MoveEntitiesSystem),
+                collide_bullets.after(MoveEntitiesSystem),
+                torpedo_reloading,
                 turret_reloading,
                 update_turret_absolute_pos,
                 aim_turrets.after(update_turret_absolute_pos),
                 fire_bullets
                     .after(turret_reloading)
                     .after(aim_turrets)
-                    .after(DetectionSystems),
+                    .after(DetectionSystem),
                 advance_smoke_cooldown,
                 deploy_smoke,
                 dissapate_smoke_puffs,
-            ),
+            )
+                .after(ReadClientMessagesSystem)
+                .before(UpdateClientsSystem),
         )
         .run();
 

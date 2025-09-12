@@ -47,8 +47,6 @@ impl ProjectileHitCalc {
         // Calculate collisions in the local space of the ship hull
         let ship_rot_inv = self.ship_rot.normalize().inverse();
         let proj_pos = ship_rot_inv * (self.projectile_pos - self.ship_pos.extend(0.));
-        // FIXME?: we're assuming the bullet impacts when the bullet hits the water
-        // Maybe this is fine, because it'll always be approx. correct
         let (ship_hull_min, ship_hull_max) = self.ship.to_template().hull.to_bounds();
         if Vec3::cmple(ship_hull_min, proj_pos).all() && Vec3::cmple(proj_pos, ship_hull_max).all()
         {

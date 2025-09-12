@@ -82,6 +82,7 @@ struct Hovering;
 )]
 pub enum ButtonInputs {
     SetSelectedShip,
+    PushSelectedShip,
     ClearSelectedShips,
 
     SetFireTarg,
@@ -118,6 +119,7 @@ impl ButtonInputs {
             | ButtonInputs::FireTorpVolley
             | ButtonInputs::UseConsumableSmoke
             | ButtonInputs::SetSelectedShip
+            | ButtonInputs::PushSelectedShip
             | ButtonInputs::ClearSelectedShips => 0,
         }
     }
@@ -531,18 +533,27 @@ fn update_selection(
         .filter_map(|(ship, _, selected, _)| selected.map(|_| ship))
         .collect_vec();
 
-    if actions.just_pressed(ButtonInputs::SetSelectedShip) {
+    let clear_selection = |mut commands: Commands| {
+        for &ship in &old_selection {
+            commands.entity(ship).remove::<Selected>();
+        }
+    };
+
+    let select_hovered = |mut commands: Commands| {
         for (ship, ship_team, _hovering) in hovering {
             if ship_team.is_this_client(*this_client) {
                 commands.entity(ship).insert_if_new(Selected);
             }
         }
-    }
+    };
 
-    if actions.just_pressed(ButtonInputs::ClearSelectedShips) {
-        for ship in old_selection {
-            commands.entity(ship).remove::<Selected>();
-        }
+    if actions.just_pressed(ButtonInputs::SetSelectedShip) {
+        clear_selection(commands.reborrow());
+        select_hovered(commands.reborrow());
+    } else if actions.just_pressed(ButtonInputs::PushSelectedShip) {
+        select_hovered(commands.reborrow());
+    } else if actions.just_pressed(ButtonInputs::ClearSelectedShips) {
+        clear_selection(commands.reborrow());
     }
 }
 

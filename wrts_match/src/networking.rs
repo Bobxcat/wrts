@@ -17,20 +17,32 @@ use crate::{FireTarget, Health, MoveOrder, Team, Torpedo, Velocity};
 
 pub struct NetworkingPlugin;
 
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ReadClientMessagesSystem;
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct UpdateClientsSystem;
+
 impl Plugin for NetworkingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PreStartup, network_handshake).add_systems(
-            FixedUpdate,
-            (
-                read_messages,
-                send_transform_updates,
-                send_velocity_updates,
-                send_turret_state_updates,
-                send_health_updates,
-                send_torpedo_reload_updates,
-                send_smoke_consumable_state_updates,
-            ),
-        );
+        app.add_systems(PreStartup, network_handshake)
+            .configure_sets(FixedUpdate, ReadClientMessagesSystem)
+            .add_systems(
+                FixedUpdate,
+                (read_messages,).in_set(ReadClientMessagesSystem),
+            )
+            .configure_sets(FixedUpdate, UpdateClientsSystem)
+            .add_systems(
+                FixedUpdate,
+                (
+                    send_transform_updates,
+                    send_velocity_updates,
+                    send_turret_state_updates,
+                    send_health_updates,
+                    send_torpedo_reload_updates,
+                    send_smoke_consumable_state_updates,
+                )
+                    .in_set(UpdateClientsSystem),
+            );
     }
 }
 

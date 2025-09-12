@@ -29,6 +29,7 @@ args = ["build", "--profile", "${BUILD_PROFILE_TEXT}"]
 
 [tasks.client]
 dependencies = ["build_client"]
+env = { "CARGO_MANIFEST_DIR" = "./" }
 command = "target/${DEBUG_OR_RELEASE_TEXT}/wrts${BIN_EXTENSION}"
 
 [tasks.build_client]

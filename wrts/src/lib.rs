@@ -59,6 +59,7 @@ impl Default for PlayerControls {
 
             button_controls: enum_map! {
                 SetSelectedShip => ButtonControl::new(MouseButton::Left),
+                PushSelectedShip => ButtonControl::new_with(MouseButton::Left, [ShiftLeft]),
                 ClearSelectedShips => ButtonControl::new(KeyQ),
                 SetFireTarg => ButtonControl::new(MouseButton::Right),
                 ClearFireTarg => ButtonControl::new_with(KeyQ, [ControlLeft]),
@@ -88,7 +89,7 @@ impl Default for PlayerSettings {
     fn default() -> Self {
         Self {
             username: "Username".into(),
-            ship_icon_scale: 30.,
+            ship_icon_scale: 20.,
             bullet_icon_scale: 5.,
             team_friend_colors: TeamColors {
                 ship_color: Color::linear_rgb(0., 0.2, 0.7),

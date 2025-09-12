@@ -3,7 +3,7 @@ use std::{cell::Cell, time::Duration};
 use bevy::{prelude::*, window::PrimaryWindow};
 use itertools::{Itertools, iproduct};
 use ordered_float::OrderedFloat;
-use wrts_match_shared::ship_template::{ShipTemplate, TargetingMode};
+use wrts_match_shared::ship_template::{ShipClass, ShipTemplate, TargetingMode};
 use wrts_messaging::ClientId;
 
 use crate::{
@@ -534,6 +534,8 @@ fn update_ship_sprites(
     this_client: Res<ThisClient>,
     settings: Res<PlayerSettings>,
     zoom: Res<MapZoom>,
+    asset_server: Res<AssetServer>,
+    images: Res<Assets<Image>>,
 ) {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum DisplayType {
@@ -546,12 +548,16 @@ fn update_ship_sprites(
         let is_selected = selected.is_some();
 
         let (display_type, sprite_size) = {
-            let simplified_size = vec2(1., 1.) * settings.ship_icon_scale * zoom.0;
-            let accurate_size = vec2(ship.template.hull.length, ship.template.hull.width);
-            if simplified_size.max_element() > accurate_size.max_element() {
-                (DisplayType::Simplified, simplified_size)
+            if zoom.0 > 7. {
+                (
+                    DisplayType::Simplified,
+                    vec2(1., 1.) * settings.ship_icon_scale * zoom.0,
+                )
             } else {
-                (DisplayType::Accurate, accurate_size)
+                (
+                    DisplayType::Accurate,
+                    vec2(ship.template.hull.length, ship.template.hull.width),
+                )
             }
         };
 
@@ -618,17 +624,31 @@ fn update_ship_sprites(
                 true => 0.7,
                 false => 1.0,
             };
-            *sprite = Sprite::from_color(
-                Color::LinearRgba(
-                    settings
-                        .team_colors(*team, *this_client)
-                        .ship_color
-                        .to_linear()
-                        * dim,
-                )
-                .with_alpha(1.),
-                sprite_size,
-            );
+            let ship_color = Color::LinearRgba(
+                settings
+                    .team_colors(*team, *this_client)
+                    .ship_color
+                    .to_linear()
+                    * dim,
+            )
+            .with_alpha(1.);
+            *sprite = match display_type {
+                DisplayType::Accurate => Sprite::from_color(ship_color, sprite_size),
+                DisplayType::Simplified => {
+                    let icon_name = match ship.template.ship_class {
+                        ShipClass::Battleship => "battleship",
+                        ShipClass::CruiserHeavy => "cruiser",
+                        ShipClass::CruiserLight => "cruiser",
+                        ShipClass::Destroyer => "destroyer",
+                    };
+                    let icon = asset_server.load(format!("icons/{icon_name}.png"));
+                    let mut s = Sprite::from_image(icon);
+                    s.image_mode = SpriteImageMode::Scale(ScalingMode::FillCenter);
+                    s.custom_size = Some(sprite_size * 3.4);
+                    s.color = ship_color;
+                    s
+                }
+            };
         }
 
         if is_visible {

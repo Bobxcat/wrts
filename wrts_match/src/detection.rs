@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use wrts_messaging::{Match2Client, Message, WrtsMatchMessage};
 
 use crate::{
-    Team, math_utils,
+    MoveEntitiesSystem, Team, math_utils,
     networking::{ClientInfo, MessagesSend, SharedEntityTracking},
     ship::{Ship, SmokePuff},
 };
@@ -10,13 +10,14 @@ use crate::{
 const MIN_DETECTION: f32 = 2_000.;
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DetectionSystems;
+pub struct DetectionSystem;
 
 pub struct DetectionPlugin;
 
 impl Plugin for DetectionPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, update_detection.in_set(DetectionSystems));
+        app.configure_sets(FixedUpdate, DetectionSystem.after(MoveEntitiesSystem))
+            .add_systems(FixedUpdate, update_detection.in_set(DetectionSystem));
     }
 }
 

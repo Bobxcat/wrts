@@ -240,7 +240,7 @@ impl ShipTemplate {
             engine_acceleration: Speed::from_kts(4. * SHIP_SPEED_SCALE),
             turning_rate: AngularSpeed::from_radps(0.20),
             max_health: 43_800.,
-            detection: 15_900.,
+            detection: 13_800.,
             detection_when_firing_through_smoke: 8_500.,
             turret_templates,
             turret_instances: vec![

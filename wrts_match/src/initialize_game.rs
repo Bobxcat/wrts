@@ -10,9 +10,11 @@ pub fn initalize_game(mut commands: Commands, teams: Query<&ClientInfo>) {
         .collect_array()
         .expect("There aren't two clients!!!");
     for team_idx in 0..2 {
+        let spacing_x = 6_000.;
+        // let spacing_x = 16_000.;
         let pos_base = match team_idx {
-            0 => vec2(8000., 0.),
-            _ => vec2(-8000., 0.),
+            0 => vec2(spacing_x, 0.),
+            _ => vec2(-spacing_x, 0.),
         };
         let rot = Quat::from_rotation_z(match team_idx {
             0 => std::f32::consts::PI,
@@ -22,7 +24,7 @@ pub fn initalize_game(mut commands: Commands, teams: Query<&ClientInfo>) {
         for ship_idx in 0..ships.len() {
             let offset_side = if ship_idx % 2 == 0 { -1. } else { 1. };
             let offset_ct = (ship_idx + 1).div_euclid(2) as f32;
-            let pos = pos_base + vec2(0., 400.) * offset_ct * offset_side;
+            let pos = pos_base + vec2(0., 1_000.) * offset_ct * offset_side;
             commands.queue(SpawnShipCommand {
                 team: Team(teams[team_idx].info.id),
                 ship_base: ships[ship_idx],
